@@ -12,15 +12,12 @@ Python 3.11+ is recommended.
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-export CDSE_CLIENT_ID='your-client-id'
-export CDSE_CLIENT_SECRET='your-client-secret'
-export OHSOME_API_KEY='your-ohsome-key'
-# Optional: the Q&A works without this key, using a local intent classifier.
-export OPENAI_API_KEY='your-openai-key'
+cp .env.example .env
+# Edit .env with your own keys; never commit or paste them into chat.
 streamlit run app.py
 ```
 
-Create a free Copernicus Data Space account and an OAuth client in [Sentinel Hub user settings](https://shapps.dataspace.copernicus.eu/dashboard/#/account/settings). Also get a free [ohsome v2 API key](https://account.heigit.org/). Its legacy v1 geometry endpoint currently returns HTTP 403. Keep credentials out of Git. Select a WGS84 bounding box no larger than 0.5° by 0.5° and an event date. The app searches Sentinel-1 GRD, selects pre/post scenes from the same satellite and relative orbit, obtains terrain-corrected VV/VH radar data, calculates change, intersects pre-event OSM features, and computes road access.
+Create a free Copernicus Data Space account and an OAuth client in [Sentinel Hub user settings](https://shapps.dataspace.copernicus.eu/dashboard/#/account/settings). Also get a free [ohsome v2 API key](https://account.heigit.org/). Its legacy v1 geometry endpoint currently returns HTTP 403. The app reads keys from `.env`, which Git ignores. Select a WGS84 bounding box no larger than 0.5° by 0.5° and an event date. The app searches Sentinel-1 GRD, selects pre/post scenes from the same satellite and relative orbit, obtains terrain-corrected VV/VH radar data, calculates change, intersects pre-event OSM features, and computes road access.
 
 Run the synthetic checks with `pip install pytest` and `python -m pytest tests -q`.
 

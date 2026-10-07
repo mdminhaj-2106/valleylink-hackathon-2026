@@ -5,6 +5,9 @@ from datetime import date
 import folium
 import numpy as np
 import streamlit as st
+from dotenv import load_dotenv
+
+load_dotenv()
 
 from copilot import answer_question, situation_report
 from valleylink import ATTRIBUTION, run

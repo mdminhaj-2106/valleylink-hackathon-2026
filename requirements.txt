@@ -5,3 +5,4 @@ networkx>=3.0,<4
 streamlit>=1.40,<2
 folium>=0.18,<1
 pyarrow>=20,<26
+python-dotenv>=1,<2
