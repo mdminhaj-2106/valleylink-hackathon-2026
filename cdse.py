@@ -80,7 +80,7 @@ def relative_orbit(satellite, absolute, timestamp):
 def scene_from_item(item):
     properties = item.get("properties", {})
     raw_id = (properties.get("s1:product_identifier") or properties.get("title")
-              or item.get("id") or "").removesuffix(".SAFE")
+              or item.get("id") or "").removesuffix(".SAFE").removesuffix("_COG")
     match = PRODUCT.fullmatch(raw_id)
     if not match:
         raise ValueError(f"Not a Sentinel-1 IW GRDH dual-VV/VH product: {raw_id}")
@@ -109,8 +109,7 @@ def catalog_scenes(bbox, flood_date, auth, *, window_days=30):
     start = datetime.combine(flood_date - timedelta(days=window_days), datetime.min.time(), timezone.utc)
     end = datetime.combine(flood_date + timedelta(days=window_days + 1), datetime.min.time(), timezone.utc)
     payload = {"bbox": list(bbox), "datetime": f"{start.isoformat()}/{end.isoformat()}",
-               "collections": ["sentinel-1-grd"], "limit": 100,
-               "filter": "sar:instrument_mode='IW' and s1:polarization='DV'"}
+               "collections": ["sentinel-1-grd"], "limit": 100}
     scenes = {}
     for _ in range(50):  # ponytail: cap pages to avoid unbounded catalog traffic; tile by date for huge AOIs.
         result = json.loads(_post(f"{BASE}/catalog/v1/search", payload, bearer=auth))

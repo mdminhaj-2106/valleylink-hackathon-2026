@@ -27,9 +27,10 @@ class CdseTests(unittest.TestCase):
         self.assertEqual(cdse.pick_pair([pre, wrong, post], date(2026, 8, 20)), (pre, post))
         self.assertEqual(pre.relative_orbit, post.relative_orbit)
 
-    def test_catalog_pagination_filters_and_product_validation(self):
+    def test_catalog_pagination_and_product_validation(self):
         start = datetime(2026, 8, 10, 10, tzinfo=timezone.utc)
         good = product("S1A", start, 248)
+        good["id"] += "_COG.SAFE"
         bad = product("S1A", start, 248)
         bad["id"] = bad["id"].replace("1SDV", "1SDH")
         pages = [json.dumps({"features": [good, bad], "context": {"next": 100}}).encode(),
@@ -37,8 +38,7 @@ class CdseTests(unittest.TestCase):
         with patch.object(cdse, "_post", side_effect=pages) as post:
             scenes = cdse.catalog_scenes([84.5, 27.5, 85, 28], date(2026, 8, 20), "token")
         self.assertEqual(len(scenes), 1)
-        self.assertEqual(post.call_args_list[0].args[1]["filter"],
-                         "sar:instrument_mode='IW' and s1:polarization='DV'")
+        self.assertNotIn("filter", post.call_args_list[0].args[1])
         self.assertEqual(post.call_args_list[1].args[1]["next"], 100)
 
     def test_process_request_pins_acquisition_and_terrain_options(self):
