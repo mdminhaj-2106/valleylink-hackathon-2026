@@ -21,10 +21,10 @@ st.caption("Satellite evidence → suspected road disruption → settlement acce
 with st.sidebar:
     st.header("Run an analysis")
     st.caption("Small bounding box, WGS84 longitude/latitude")
-    west = st.number_input("West", value=85.10, format="%.5f")
-    south = st.number_input("South", value=27.90, format="%.5f")
-    east = st.number_input("East", value=85.25, format="%.5f")
-    north = st.number_input("North", value=28.05, format="%.5f")
+    west = st.number_input("West", value=85.318, format="%.5f")
+    south = st.number_input("South", value=28.145, format="%.5f")
+    east = st.number_input("East", value=85.353, format="%.5f")
+    north = st.number_input("North", value=28.192, format="%.5f")
     flood_date = st.date_input("Flood date", value=date(2026, 8, 26))
     submitted = st.button("Run from satellite data", type="primary", use_container_width=True)
 
@@ -44,25 +44,38 @@ result = st.session_state.analysis
 west, south, east, north = st.session_state.bbox
 scenes = result["scenes"]
 st.caption(f"Sentinel-1 relative orbit {scenes['relative_orbit']} · Before: {scenes['before']} · After: {scenes['after']}")
+if result["optical_dates"]:
+    st.caption(f"Sentinel-2 · Before: {result['optical_dates'][0]} · After: {result['optical_dates'][1]}")
+else:
+    st.warning(f"No usable optical pair: {result['optical_error']}. Radar-only candidate impacts are lower confidence.")
 
 cards = st.columns(5)
 for column, label, value in zip(cards,
-    ["Changed area", "Buildings", "Road exposed", "Bridges", "Possibly cut off"],
+    ["Candidate change", "Buildings", "Road exposed", "Bridges", "Possibly cut off"],
     [f"{result['flood_km2']} km²", len(result["buildings"]),
      f"{result['affected_road_km']} km", len(result["affected_bridge_ids"]),
      len(result["cutoff"]) if result["access_available"] else "Unknown"],
 ):
     column.metric(label, value)
 
-st.caption(f"Valid radar coverage: {result['valid_fraction']:.0%}. All impacts are potential, not confirmed field damage.")
+st.caption(f"Usable radar coverage: {result['valid_fraction']:.0%}. "
+           + (f"Usable optical coverage: {result['optical_clear_fraction']:.0%}. "
+              if result['optical_clear_fraction'] is not None else "")
+           + "All impacts are candidates, not confirmed field damage.")
 
 def preview(image):
     db = 10 * np.log10(np.maximum(image[0], 1e-8))
-    return np.clip((db + 25) / 25 * 255, 0, 255).astype("uint8")
+    return np.nan_to_num(np.clip((db + 25) / 25 * 255, 0, 255)).astype("uint8")
 
 before_col, after_col = st.columns(2)
 before_col.image(preview(st.session_state.imagery[0]), caption="Before: Sentinel-1 VV radar")
 after_col.image(preview(st.session_state.imagery[1]), caption="After: Sentinel-1 VV radar")
+if len(st.session_state.imagery) == 4:
+    optical_before, optical_after = st.columns(2)
+    def rgb(image):
+        return np.clip(np.moveaxis(image[[2, 1, 0]], 0, -1) * 2.5, 0, 1)
+    optical_before.image(rgb(st.session_state.imagery[2]), caption="Before: Sentinel-2 false color (NIR/red/green)")
+    optical_after.image(rgb(st.session_state.imagery[3]), caption="After: Sentinel-2 false color (NIR/red/green)")
 
 st.subheader("Which crossing matters most?")
 scenarios = result["scenarios"]
@@ -74,16 +87,18 @@ if scenarios:
     selected = scenarios[choice]
     st.success(f"Scenario: {selected['restored']} settlements regain a route to a town or hospital. "
                "This does not establish that the road is safe to use.")
+elif not result["access_available"]:
+    st.write("Road-access analysis unavailable: no mapped destination connects to this local network.")
 else:
     st.write("No single suspected crossing restores access within this area.")
 
 map_view = folium.Map(location=[(south + north)/2, (west + east)/2], zoom_start=11,
-                      tiles="CartoDB positron")
+                      tiles="OpenStreetMap")
 if result["possible_geometry"]["type"] != "GeometryCollection":
-    folium.GeoJson(result["possible_geometry"], name="Possible change",
+    folium.GeoJson(result["possible_geometry"], name="Possible radar or optical change",
                    style_function=lambda _: {"color": "#ffbd59", "fillOpacity": 0.25, "weight": 1}).add_to(map_view)
 if result["strict_geometry"]["type"] != "GeometryCollection":
-    folium.GeoJson(result["strict_geometry"], name="Stronger change",
+    folium.GeoJson(result["strict_geometry"], name="Optical candidate change" if result["evidence_mode"] == "optical" else "Radar candidate change",
                    style_function=lambda _: {"color": "#e56719", "fillOpacity": 0.65, "weight": 1}).add_to(map_view)
 if result["affected_roads"]:
     folium.GeoJson({"type": "FeatureCollection", "features": result["affected_roads"]},

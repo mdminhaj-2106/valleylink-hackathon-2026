@@ -24,6 +24,8 @@ class CopilotTests(unittest.TestCase):
         self.assertIn("2", report)
         self.assertIn("3.5 km", report)
         self.assertIn("80%", report)
+        self.assertIn("pre-event OpenStreetMap", report)
+        self.assertIn("in the local road network", report)
         self.assertIn("Village A", answer_question(FACTS, "Which villages are cut off?"))
         self.assertIn("way/7", answer_question(FACTS, "Which crossing restores access?"))
         self.assertIn("बस्ती: 1", answer_question(FACTS, "कति बस्तीको पहुँच बन्द भयो?", "Nepali"))
@@ -35,6 +37,8 @@ class CopilotTests(unittest.TestCase):
         self.assertIn("पर्याप्त जानकारी छैन", answer_question({}, "कति पुल?", "Nepali"))
         self.assertIn("does not contain", answer_question(FACTS, "How many people died?"))
         self.assertIn("does not contain", answer_question(FACTS, "How many people are cut off?"))
+        self.assertIn("Field checks", answer_question(FACTS, "How many bridges are confirmed destroyed?"))
+        self.assertIn("Field checks", answer_question(FACTS, "Are these roads safe?"))
 
     @patch.dict("os.environ", {"OPENAI_API_KEY": ""})
     def test_unavailable_road_access_is_not_reported_as_zero(self):

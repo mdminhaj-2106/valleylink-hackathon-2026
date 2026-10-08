@@ -10,7 +10,7 @@ from rasterio.features import shapes
 from shapely.geometry import LineString, mapping, shape
 from shapely.ops import unary_union
 
-from cdse import catalog_scenes, pick_pair, radar_scene, token
+from cdse import catalog_scenes, pick_pair, radar_scene, sentinel2_pair, token
 from osm_history import osm_features
 
 ATTRIBUTION = (
@@ -22,13 +22,31 @@ ATTRIBUTION = (
 def change_masks(pre, post, strict_db=3.0, possible_db=2.0):
     if pre.shape != post.shape or pre.shape[0] != 4:
         raise ValueError("Radar images must align and have VV, VH, shadow and data bands.")
-    valid = (pre[3] > 0) & (post[3] > 0) & (pre[2] == 0) & (post[2] == 0)
-    vv = 10 * np.log10(np.maximum(post[0], 1e-8) / np.maximum(pre[0], 1e-8))
-    vh = 10 * np.log10(np.maximum(post[1], 1e-8) / np.maximum(pre[1], 1e-8))
+    valid = ((pre[3] > 0) & (post[3] > 0) & (pre[2] == 0) & (post[2] == 0)
+             & np.isfinite(pre[:2]).all(axis=0) & np.isfinite(post[:2]).all(axis=0))
+    with np.errstate(divide="ignore", invalid="ignore"):
+        vv = 10 * np.log10(np.maximum(post[0], 1e-8) / np.maximum(pre[0], 1e-8))
+        vh = 10 * np.log10(np.maximum(post[1], 1e-8) / np.maximum(pre[1], 1e-8))
     # Both darker open water and brighter rough debris are candidate change.
     possible = valid & ((vv <= -possible_db) | ((vv >= possible_db) & (vh >= possible_db)))
     strict = valid & ((vv <= -strict_db) | ((vv >= strict_db) & (vh >= strict_db)))
     return strict, possible, valid
+
+
+def optical_change(pre, post):
+    """Candidate new water or vegetation loss in usable Sentinel-2 pixels."""
+    if pre.shape != post.shape or pre.shape[0] != 6:
+        raise ValueError("Optical images must align and contain B03/B04/B08/B11/SCL/dataMask.")
+    valid = (np.isin(pre[4], [4, 5, 6]) & np.isin(post[4], [2, 4, 5, 6])
+             & (pre[5] > 0) & (post[5] > 0)
+             & np.isfinite(pre[:4]).all(axis=0) & np.isfinite(post[:4]).all(axis=0))
+    ndvi_before = (pre[2] - pre[1]) / (pre[2] + pre[1] + 1e-6)
+    ndvi_after = (post[2] - post[1]) / (post[2] + post[1] + 1e-6)
+    ndwi_before = (pre[0] - pre[3]) / (pre[0] + pre[3] + 1e-6)
+    ndwi_after = (post[0] - post[3]) / (post[0] + post[3] + 1e-6)
+    change = (((ndvi_before > 0.25) & (ndvi_before - ndvi_after > 0.2))
+              | ((ndwi_after > 0.1) & (ndwi_before < 0)))
+    return valid & change, valid
 
 
 def mask_geometry(mask, transform):
@@ -151,8 +169,13 @@ def crossing_scenarios(graph, places, hospitals, max_results=10):
     return sorted(ranked, key=lambda item: (-item["restored"], item["feature_id"]))[:max_results]
 
 
-def analyze(pre, post, transform, osm, strict_db=3.0, possible_db=2.0):
-    strict, possible, valid = change_masks(pre, post, strict_db, possible_db)
+def analyze(pre, post, transform, osm, strict_db=3.0, possible_db=2.0, optical=None):
+    radar_strict, possible, valid = change_masks(pre, post, strict_db, possible_db)
+    if optical is None:
+        strict, optical_valid = radar_strict, None
+    else:
+        strict, optical_valid = optical_change(*optical)
+        possible |= strict
     strict_geom, possible_geom = mask_geometry(strict, transform), mask_geometry(possible, transform)
     graph, road_ids, bridge_ids, road_m = road_graph(osm["roads"], strict_geom)
     destinations = osm["hospitals"] + [f for f in osm["places"]
@@ -173,6 +196,8 @@ def analyze(pre, post, transform, osm, strict_db=3.0, possible_db=2.0):
     flood_km2 = float(strict.sum(axis=1) @ row_km2)
     return {"strict_geometry": mapping(strict_geom), "possible_geometry": mapping(possible_geom),
             "valid_fraction": float(valid.mean()), "flood_km2": round(flood_km2, 2),
+            "evidence_mode": "optical" if optical is not None else "radar-only",
+            "optical_clear_fraction": float(optical_valid.mean()) if optical_valid is not None else None,
             "buildings": buildings,
             "affected_roads": [f for f in osm["roads"] if feature_id(f) in road_ids],
             "affected_road_ids": sorted(road_ids), "affected_bridge_ids": sorted(bridge_ids),
@@ -192,7 +217,21 @@ def run(bbox, flood_date):
     post, post_transform = radar_scene(after_scene, bbox, auth)
     if not np.allclose(tuple(transform), tuple(post_transform)):
         raise ValueError("Before and after image grids do not align.")
-    result, graph = analyze(pre, post, transform, osm_features(bbox, flood_date))
+    optical = None
+    optical_times = None
+    optical_error = None
+    try:
+        optical_pre, optical_post, optical_transform, optical_before, optical_after = sentinel2_pair(
+            bbox, flood_date, auth, width=pre.shape[2])
+        if not np.allclose(tuple(transform), tuple(optical_transform)):
+            raise ValueError("Radar and optical image grids do not align.")
+        optical = (optical_pre, optical_post)
+        optical_times = (optical_before, optical_after)
+    except ValueError as exc:
+        optical_error = str(exc)
+    result, graph = analyze(pre, post, transform, osm_features(bbox, flood_date), optical=optical)
     result["scenes"] = {"before": before_scene.product_id, "after": after_scene.product_id,
                         "relative_orbit": before_scene.relative_orbit}
-    return result, graph, (pre, post)
+    result["optical_dates"] = [time.isoformat() for time in optical_times] if optical_times else None
+    result["optical_error"] = optical_error
+    return result, graph, (pre, post, *(optical or ()))

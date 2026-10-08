@@ -53,6 +53,34 @@ class CdseTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Invalid WGS84"):
             cdse.process_payload(scene, [85, 28, 84, 27])
 
+    def test_sentinel2_pair_returns_aligned_six_band_dates(self):
+        import numpy as np
+        from rasterio.io import MemoryFile
+        from rasterio.transform import from_origin
+
+        with MemoryFile() as mem:
+            with mem.open(driver="GTiff", width=64, height=64, count=6, dtype="float32",
+                          crs="EPSG:4326", transform=from_origin(85, 28, 0.01, 0.01)) as raster:
+                bands = np.ones((6, 64, 64), dtype="float32")
+                raster.write(bands)
+            tiff = mem.read()
+        pre_catalog = {"features": [{"properties": {"datetime": "2026-08-12T05:00:00Z",
+                                                 "eo:cloud_cover": 90}}]}
+        post_catalog = {"features": [{"properties": {"datetime": "2026-08-27T05:00:00Z",
+                                                  "eo:cloud_cover": 78}}]}
+        responses = [json.dumps(pre_catalog).encode(), tiff,
+                     json.dumps(post_catalog).encode(), tiff]
+        with patch.object(cdse, "_post", side_effect=responses) as post:
+            pre, after, transform, pre_time, after_time = cdse.sentinel2_pair(
+                [85.32, 28.15, 85.35, 28.19], date(2026, 8, 26), "token", width=64)
+        self.assertEqual(pre.shape, (6, 64, 64))
+        self.assertTrue(np.array_equal(pre, after))
+        self.assertEqual(pre_time.date(), date(2026, 8, 12))
+        self.assertEqual(after_time.date(), date(2026, 8, 27))
+        self.assertEqual(post.call_args_list[1].args[1]["input"]["data"][0]["dataFilter"]["timeRange"]["from"],
+                         "2026-08-12T05:00:00Z")
+        self.assertEqual(post.call_args_list[3].args[1]["evalscript"], cdse.S2_EVALSCRIPT)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -4,7 +4,7 @@ import numpy as np
 from rasterio.transform import from_origin
 
 from cdse import Scene, pick_pair, relative_orbit
-from valleylink import analyze, change_masks
+from valleylink import analyze, change_masks, optical_change
 
 
 def feature(identifier, geometry, **tags):
@@ -58,3 +58,16 @@ def test_blocked_crossing_restores_one_village():
     assert result["scenarios"][0]["restored"] == 1
     assert len(result["buildings"]) == 1
     assert result["flood_km2"] > 0
+
+
+def test_optical_change_excludes_clouds_and_detects_vegetation_loss():
+    pre = np.zeros((6, 2, 2), dtype=np.float32)
+    post = np.zeros_like(pre)
+    pre[1], pre[2] = 0.1, 0.5  # healthy vegetation: red, NIR
+    post[1], post[2] = 0.3, 0.2  # new bare or disturbed surface
+    pre[4] = post[4] = 4  # usable land pixels
+    pre[5] = post[5] = 1
+    post[4, 0, 1] = 9  # cloud, despite apparent index change
+    change, valid = optical_change(pre, post)
+    assert change.tolist() == [[True, False], [True, True]]
+    assert not valid[0, 1]

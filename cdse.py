@@ -28,6 +28,15 @@ function setup() {
 }
 function evaluatePixel(s) { return [s.VV, s.VH, s.shadowMask, s.dataMask]; }
 """
+S2_EVALSCRIPT = """//VERSION=3
+function setup() {
+  return {input: ["B03", "B04", "B08", "B11", "SCL", "dataMask"],
+          output: {bands: 6, sampleType: "FLOAT32"}};
+}
+function evaluatePixel(s) {
+  return [s.B03, s.B04, s.B08, s.B11, s.SCL, s.dataMask];
+}
+"""
 
 
 @dataclass(frozen=True)
@@ -178,3 +187,66 @@ def radar_scene(scene, bbox, auth, *, width=512):
     if bands.shape[0] != 4 or not np.any(bands[3] > 0):
         raise ValueError("Radar response has no usable four-band VV/VH/shadow/data coverage.")
     return bands, transform
+
+
+def sentinel2_pair(bbox, flood_date, auth, *, pre_date=None, post_date=None, width=512):
+    """Return aligned (pre, post, transform, pre_UTC, post_UTC) optical rasters.
+
+    Six FLOAT32 bands: B03, B04, B08, B11 reflectance, SCL class, dataMask.
+    Default dates match the Trishuli 26 Aug 2026 case: 12 and 27 August.
+    """
+    import numpy as np
+    from rasterio.io import MemoryFile
+
+    _validate_bbox(bbox)
+    if not 64 <= width <= 2500:
+        raise ValueError("Raster width must be 64–2500 pixels.")
+    pre_date = pre_date or flood_date - timedelta(days=14)
+    post_date = post_date or flood_date + timedelta(days=1)
+    if not pre_date < flood_date < post_date:
+        raise ValueError("Optical dates must bracket the flood date.")
+
+    west, south, east, north = bbox
+    height = max(64, min(2500, round(width * (north - south) / (east - west)
+                                      * math.cos(math.radians((south + north) / 2)))))
+
+    def fetch(day):
+        begin = datetime.combine(day, datetime.min.time(), timezone.utc)
+        finish = begin + timedelta(days=1)
+        query = {"bbox": list(bbox), "datetime": f"{begin.isoformat()}/{finish.isoformat()}",
+                 "collections": ["sentinel-2-l2a"], "limit": 100}
+        catalog = json.loads(_post(f"{BASE}/catalog/v1/search", query, bearer=auth))
+        items = catalog.get("features", [])
+        if not items:
+            raise ValueError(f"No Sentinel-2 L2A acquisition for {day.isoformat()} over this area.")
+        selected = min(items, key=lambda item: item.get("properties", {}).get("eo:cloud_cover")
+                       if item.get("properties", {}).get("eo:cloud_cover") is not None else 100)
+        timestamp = datetime.fromisoformat(selected["properties"]["datetime"].replace("Z", "+00:00"))
+        if timestamp.tzinfo is None:
+            raise ValueError("Catalog returned an invalid optical acquisition timestamp.")
+        timestamp = timestamp.astimezone(timezone.utc)
+        if timestamp.date() != day:
+            raise ValueError("Catalog returned an invalid optical acquisition timestamp.")
+        # A narrow interval selects the cataloged overpass, including adjacent tiles.
+        timerange = {"from": timestamp.isoformat().replace("+00:00", "Z"),
+                     "to": (timestamp + timedelta(minutes=5)).isoformat().replace("+00:00", "Z")}
+        payload = {"input": {"bounds": {"bbox": list(bbox)},
+                             "data": [{"type": "sentinel-2-l2a", "dataFilter": {"timeRange": timerange}}]},
+                   "output": {"width": width, "height": height,
+                              "responses": [{"identifier": "default", "format": {"type": "image/tiff"}}]},
+                   "evalscript": S2_EVALSCRIPT}
+        data = _post(f"{BASE}/process/v1", payload, bearer=auth, timeout=180)
+        try:
+            with MemoryFile(data) as mem, mem.open() as raster:
+                bands, transform = raster.read(), raster.transform
+        except Exception as exc:
+            raise ValueError("Copernicus Process API did not return a readable Sentinel-2 GeoTIFF.") from exc
+        if bands.shape[0] != 6 or not np.any(bands[5] > 0):
+            raise ValueError("Sentinel-2 response has no usable six-band coverage.")
+        return bands, transform, timestamp
+
+    pre, pre_transform, pre_time = fetch(pre_date)
+    post, post_transform, post_time = fetch(post_date)
+    if pre.shape != post.shape or pre_transform != post_transform:
+        raise ValueError("Sentinel-2 before and after images do not align.")
+    return pre, post, pre_transform, pre_time, post_time

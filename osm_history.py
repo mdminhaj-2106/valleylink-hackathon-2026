@@ -9,11 +9,13 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 import pyarrow.parquet as parquet
-from shapely.geometry import mapping
+from shapely.geometry import box, mapping, shape
 from shapely.wkb import loads as load_wkb
 
 
 URL = "https://api.heigit.org/ohsome-api/v2-rc/extraction/features.parquet"
+# ponytail: fixed ~20 km coordinate buffer; use distance-aware expansion if sparse regions need wider searches.
+CONTEXT_DEGREES = 0.2
 FILTERS = {
     "roads": ("type:way and highway in (motorway, motorway_link, trunk, trunk_link, "
               "primary, primary_link, secondary, secondary_link, tertiary, tertiary_link, "
@@ -69,8 +71,16 @@ def osm_features(bbox, flood_date: date, *, api_key=None, fetch=fetch_parquet):
     west, south, east, north = bbox
     if not (-180 <= west < east <= 180 and -90 <= south < north <= 90):
         raise ValueError("Invalid WGS84 bounding box.")
+    context = [max(-180, west - CONTEXT_DEGREES), max(-90, south - CONTEXT_DEGREES),
+               min(180, east + CONTEXT_DEGREES), min(90, north + CONTEXT_DEGREES)]
     timestamp = datetime.combine(flood_date - timedelta(days=1), time.min,
                                  tzinfo=timezone.utc).isoformat().replace("+00:00", "Z")
-    return {name: parse_features(fetch({"aoi": list(bbox), "time": timestamp,
-                                        "filter": tag_filter, "clip": False}, api_key))
-            for name, tag_filter in FILTERS.items()}
+    result = {name: parse_features(fetch({"aoi": list(bbox) if name == "buildings" else context,
+                                          "time": timestamp, "filter": tag_filter,
+                                          "clip": False}, api_key))
+              for name, tag_filter in FILTERS.items()}
+    selected = box(*bbox)
+    result["places"] = [feature for feature in result["places"]
+                        if feature["properties"].get("place") in ("town", "city")
+                        or shape(feature["geometry"]).intersects(selected)]
+    return result
