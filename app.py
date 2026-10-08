@@ -1,13 +1,14 @@
 """Run with: streamlit run app.py"""
 
 from datetime import date
+from pathlib import Path
 
 import folium
 import numpy as np
 import streamlit as st
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(Path(__file__).with_name(".env"))
 
 from copilot import answer_question, situation_report
 from valleylink import ATTRIBUTION, run
