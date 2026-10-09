@@ -35,11 +35,23 @@ class CdseTests(unittest.TestCase):
         bad["id"] = bad["id"].replace("1SDV", "1SDH")
         pages = [json.dumps({"features": [good, bad], "context": {"next": 100}}).encode(),
                  json.dumps({"features": [good], "context": {}}).encode()]
-        with patch.object(cdse, "_post", side_effect=pages) as post:
+        with patch.object(cdse, "_post", side_effect=[ValueError("STAC unavailable"), *pages]) as post:
             scenes = cdse.catalog_scenes([84.5, 27.5, 85, 28], date(2026, 8, 20), "token")
         self.assertEqual(len(scenes), 1)
-        self.assertNotIn("filter", post.call_args_list[0].args[1])
-        self.assertEqual(post.call_args_list[1].args[1]["next"], 100)
+        self.assertEqual(post.call_args_list[0].args[0], cdse.STAC)
+        self.assertNotIn("filter", post.call_args_list[1].args[1])
+        self.assertEqual(post.call_args_list[2].args[1]["next"], 100)
+
+    def test_public_stac_catalog_avoids_slow_authenticated_catalog(self):
+        start = datetime(2026, 8, 10, 10, tzinfo=timezone.utc)
+        item = product("S1A", start, 248)
+        item["id"] += "_COG"
+        data = json.dumps({"features": [item], "links": []}).encode()
+        with patch.object(cdse, "_post", return_value=data) as post:
+            scenes = cdse.catalog_scenes([84.5, 27.5, 85, 28], date(2026, 8, 20), "token")
+        self.assertEqual(len(scenes), 1)
+        self.assertEqual(post.call_count, 1)
+        self.assertEqual(post.call_args.args[0], cdse.STAC)
 
     def test_process_request_pins_acquisition_and_terrain_options(self):
         scene = cdse.scene_from_item(product("S1A", datetime(2026, 8, 10, 10, tzinfo=timezone.utc), 248))
@@ -163,6 +175,12 @@ class CdseTests(unittest.TestCase):
         with patch.object(cdse, "urlopen", side_effect=TimeoutError("The read operation timed out")):
             with self.assertRaisesRegex(ValueError, "timed out after 20s"):
                 cdse._post("https://example.invalid", {}, timeout=20)
+
+    def test_default_copernicus_request_fails_fast(self):
+        with patch.object(cdse, "urlopen", side_effect=TimeoutError("The read operation timed out")) as open_url:
+            with self.assertRaisesRegex(ValueError, "timed out after 15s"):
+                cdse._post("https://example.invalid", {})
+        self.assertEqual(open_url.call_args.kwargs["timeout"], 15)
 
 
 if __name__ == "__main__":

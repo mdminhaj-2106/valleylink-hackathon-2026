@@ -18,6 +18,7 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 BASE = "https://sh.dataspace.copernicus.eu"
+STAC = "https://stac.dataspace.copernicus.eu/v1/search"
 TOKEN_URL = "https://identity.dataspace.copernicus.eu/auth/realms/CDSE/protocol/openid-connect/token"
 PRODUCT = re.compile(
     r"^(S1[ABCD])_IW_GRDH_1SDV_(\d{8}T\d{6})_(\d{8}T\d{6})_(\d{6})_[0-9A-F]{6}_[0-9A-F]{4}$"
@@ -50,7 +51,7 @@ class Scene:
     orbit_state: str
 
 
-def _post(url, payload, *, bearer=None, form=False, timeout=60):
+def _post(url, payload, *, bearer=None, form=False, timeout=15):
     headers = {"User-Agent": "ValleyLink/0.1",
                "Content-Type": "application/x-www-form-urlencoded" if form else "application/json"}
     if bearer:
@@ -123,6 +124,18 @@ def catalog_scenes(bbox, flood_date, auth, *, window_days=30):
     payload = {"bbox": list(bbox), "datetime": f"{start.isoformat()}/{end.isoformat()}",
                "collections": ["sentinel-1-grd"], "limit": 100}
     scenes = {}
+    try:
+        result = json.loads(_post(STAC, payload, timeout=15))
+        for item in result.get("features", []):
+            try:
+                scene = scene_from_item(item)
+                scenes[scene.product_id] = scene
+            except ValueError:
+                continue
+        if not any(link.get("rel") == "next" for link in result.get("links", [])):
+            return sorted(scenes.values(), key=lambda scene: scene.timestamp)
+    except ValueError:
+        pass  # The authenticated Catalog remains a fallback when STAC is unavailable.
     for _ in range(50):  # ponytail: cap pages to avoid unbounded catalog traffic; tile by date for huge AOIs.
         result = json.loads(_post(f"{BASE}/catalog/v1/search", payload, bearer=auth))
         for item in result.get("features", []):

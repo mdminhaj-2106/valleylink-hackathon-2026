@@ -29,15 +29,21 @@ with st.sidebar:
     submitted = st.button("Run from satellite data", type="primary", use_container_width=True)
 
 if submitted:
-    for key in ("analysis", "imagery", "bbox", "flood_date"):
-        st.session_state.pop(key, None)
     try:
         with st.spinner("Finding same-orbit scenes and analysing roads…"):
-            st.session_state.analysis, _, st.session_state.imagery = run((west, south, east, north), flood_date)
-            st.session_state.bbox = (west, south, east, north)
-            st.session_state.flood_date = flood_date
+            analysis, _, imagery = run((west, south, east, north), flood_date)
+        st.session_state.analysis = analysis
+        st.session_state.imagery = imagery
+        st.session_state.bbox = (west, south, east, north)
+        st.session_state.flood_date = flood_date
+        st.session_state.pop("analysis_error", None)
     except Exception as exc:
-        st.error(str(exc))
+        st.session_state.analysis_error = str(exc)
+
+if "analysis_error" in st.session_state:
+    st.error(f"New analysis failed: {st.session_state.analysis_error}")
+    if "analysis" in st.session_state:
+        st.warning("Showing the previous successful analysis below, not the failed request.")
 
 if "analysis" not in st.session_state:
     st.info("Enter an area and date, then run the analysis. Copernicus OAuth credentials are required; see README.")
@@ -45,6 +51,7 @@ if "analysis" not in st.session_state:
 
 result = st.session_state.analysis
 west, south, east, north = st.session_state.bbox
+st.caption(f"Showing analysis for {st.session_state.flood_date} · WGS84 box {west:.3f}, {south:.3f}, {east:.3f}, {north:.3f}")
 scenes = result["scenes"]
 st.caption(f"Sentinel-1 relative orbit {scenes['relative_orbit']} · Before: {scenes['before']} · After: {scenes['after']}")
 if result["optical_dates"]:
