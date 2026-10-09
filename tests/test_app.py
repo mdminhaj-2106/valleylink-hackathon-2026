@@ -1,6 +1,7 @@
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 import numpy as np
 from streamlit.testing.v1 import AppTest
@@ -31,7 +32,8 @@ class AppTests(unittest.TestCase):
         image = np.ones((4, 2, 2), dtype="float32")
         app = AppTest.from_file(Path(__file__).resolve().parents[1] / "app.py", default_timeout=30)
         with patch("valleylink.run", side_effect=[(result, None, (image, image)),
-                                                   ValueError("Copernicus timed out")]) as run_analysis, \
+                                                   ValueError("Copernicus timed out"),
+                                                   TypeError("run() got an unexpected keyword argument 'previous'")]) as run_analysis, \
              patch("streamlit.pydeck_chart") as map_chart:
             app.run()
             app.button[0].click().run()
@@ -43,10 +45,16 @@ class AppTests(unittest.TestCase):
             app.button[0].click().run()
             self.assertIs(run_analysis.call_args.kwargs["previous"][0], result)
             self.assertIs(run_analysis.call_args.kwargs["previous"][1][0], image)
-        self.assertEqual(len(app.metric), 5)
-        self.assertEqual(app.session_state["analysis"], result)
-        self.assertTrue(any("previous successful analysis" in warning.value for warning in app.warning))
-        self.assertIn("Copernicus timed out", app.error[0].value)
+            self.assertEqual(len(app.metric), 5)
+            self.assertEqual(app.session_state["analysis"], result)
+            self.assertTrue(any("previous successful analysis" in warning.value for warning in app.warning))
+            self.assertIn("Copernicus timed out", app.error[0].value)
+            fresh_run = Mock(return_value=(result, None, (image, image)))
+            with patch("importlib.reload", return_value=SimpleNamespace(run=fresh_run)) as reload_module:
+                app.button[0].click().run()
+            reload_module.assert_called_once()
+            self.assertIs(fresh_run.call_args.kwargs["previous"][0], result)
+            self.assertEqual(len(app.error), 0)
 
 
 if __name__ == "__main__":

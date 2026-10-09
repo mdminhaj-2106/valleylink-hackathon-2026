@@ -1,6 +1,7 @@
 """Run with: streamlit run app.py"""
 
 from datetime import date
+import importlib
 from pathlib import Path
 
 import numpy as np
@@ -11,6 +12,7 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).with_name(".env"))
 
 from copilot import answer_question_with_mode, report_html, situation_report
+import valleylink
 from valleylink import ATTRIBUTION, run
 
 
@@ -38,7 +40,13 @@ if submitted:
             previous = (st.session_state.analysis, st.session_state.imagery)
         with st.spinner("Reusing previous radar images; retrying optical…" if previous else
                         "Finding same-orbit scenes and analysing roads…"):
-            analysis, _, imagery = run(bbox, flood_date, previous=previous)
+            try:
+                analysis, _, imagery = run(bbox, flood_date, previous=previous)
+            except TypeError as exc:
+                if "run() got an unexpected keyword argument 'previous'" not in str(exc):
+                    raise
+                analysis, _, imagery = importlib.reload(valleylink).run(
+                    bbox, flood_date, previous=previous)
         st.session_state.analysis = analysis
         st.session_state.imagery = imagery
         st.session_state.bbox = bbox
