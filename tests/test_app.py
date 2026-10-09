@@ -31,7 +31,7 @@ class AppTests(unittest.TestCase):
         image = np.ones((4, 2, 2), dtype="float32")
         app = AppTest.from_file(Path(__file__).resolve().parents[1] / "app.py", default_timeout=30)
         with patch("valleylink.run", side_effect=[(result, None, (image, image)),
-                                                   ValueError("Copernicus timed out")]), \
+                                                   ValueError("Copernicus timed out")]) as run_analysis, \
              patch("streamlit.pydeck_chart") as map_chart:
             app.run()
             app.button[0].click().run()
@@ -41,6 +41,8 @@ class AppTests(unittest.TestCase):
                 self.assertIn(layer, map_json)
             self.assertEqual(map_chart.call_args.kwargs["height"], 580)
             app.button[0].click().run()
+            self.assertIs(run_analysis.call_args.kwargs["previous"][0], result)
+            self.assertIs(run_analysis.call_args.kwargs["previous"][1][0], image)
         self.assertEqual(len(app.metric), 5)
         self.assertEqual(app.session_state["analysis"], result)
         self.assertTrue(any("previous successful analysis" in warning.value for warning in app.warning))

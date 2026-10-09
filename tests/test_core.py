@@ -1,12 +1,13 @@
 from datetime import date, datetime, timezone
+from unittest.mock import patch
 
 import numpy as np
 import networkx as nx
-from rasterio.transform import from_origin
+from rasterio.transform import from_bounds, from_origin
 from shapely.geometry import Polygon, shape
 
 from cdse import Scene, pick_pair, relative_orbit
-from valleylink import access_analysis, analyze, change_masks, optical_change, road_graph
+from valleylink import access_analysis, analyze, change_masks, optical_change, road_graph, run
 
 
 def feature(identifier, geometry, **tags):
@@ -37,6 +38,26 @@ def test_orbit_matching_and_change_detection():
     strict, possible, valid = change_masks(pre, post)
     assert strict.sum() == possible.sum() == 1
     assert valid.all()
+
+
+def test_same_area_rerun_reuses_radar_images_when_optical_is_unavailable():
+    bbox = (85.318, 28.145, 85.353, 28.192)
+    image = np.ones((4, 2, 2), dtype="float32")
+    scenes = {"before": "PRE", "after": "POST", "relative_orbit": 85}
+    with patch("valleylink.token", return_value="token"), \
+         patch("valleylink.catalog_scenes") as catalog, \
+         patch("valleylink.radar_scene") as radar, \
+         patch("valleylink.sentinel2_pair", side_effect=ValueError("optical timeout")), \
+         patch("valleylink.osm_features", return_value={}), \
+         patch("valleylink.analyze", return_value=({}, None)) as analyze_images:
+        result, graph, imagery = run(bbox, date(2026, 8, 26),
+                                    previous=({"scenes": scenes}, (image, image)))
+    catalog.assert_not_called()
+    radar.assert_not_called()
+    assert analyze_images.call_args.args[2] == from_bounds(*bbox, 2, 2)
+    assert result["scenes"] == scenes
+    assert result["optical_error"] == "optical timeout"
+    assert imagery[0] is image and imagery[1] is image
 
 
 def test_blocked_crossing_restores_one_village():

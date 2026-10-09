@@ -30,11 +30,18 @@ with st.sidebar:
 
 if submitted:
     try:
-        with st.spinner("Finding same-orbit scenes and analysing roads…"):
-            analysis, _, imagery = run((west, south, east, north), flood_date)
+        bbox = (west, south, east, north)
+        previous = None
+        if (st.session_state.get("bbox") == bbox
+                and st.session_state.get("flood_date") == flood_date
+                and "analysis" in st.session_state and "imagery" in st.session_state):
+            previous = (st.session_state.analysis, st.session_state.imagery)
+        with st.spinner("Reusing previous radar images; retrying optical…" if previous else
+                        "Finding same-orbit scenes and analysing roads…"):
+            analysis, _, imagery = run(bbox, flood_date, previous=previous)
         st.session_state.analysis = analysis
         st.session_state.imagery = imagery
-        st.session_state.bbox = (west, south, east, north)
+        st.session_state.bbox = bbox
         st.session_state.flood_date = flood_date
         st.session_state.pop("analysis_error", None)
     except Exception as exc:

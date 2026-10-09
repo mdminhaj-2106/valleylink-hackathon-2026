@@ -7,6 +7,7 @@ import math
 import networkx as nx
 import numpy as np
 from rasterio.features import shapes
+from rasterio.transform import from_bounds
 from shapely.geometry import LineString, mapping, shape
 from shapely.ops import unary_union
 
@@ -216,18 +217,28 @@ def analyze(pre, post, transform, osm, strict_db=3.0, possible_db=2.0, optical=N
             "cutoff": cutoff, "access_available": access_available, "scenarios": scenarios}, graph
 
 
-def run(bbox, flood_date):
+def run(bbox, flood_date, *, previous=None):
     west, south, east, north = bbox
     if not (-180 <= west < east <= 180 and -90 <= south < north <= 90):
         raise ValueError("Enter a valid west, south, east, north bounding box.")
     if east - west > 0.5 or north - south > 0.5:
         raise ValueError("Keep the first prototype area within 0.5° by 0.5°.")
     auth = token()
-    before_scene, after_scene = pick_pair(catalog_scenes(bbox, flood_date, auth), flood_date)
-    pre, transform = radar_scene(before_scene, bbox, auth)
-    post, post_transform = radar_scene(after_scene, bbox, auth)
-    if not np.allclose(tuple(transform), tuple(post_transform)):
-        raise ValueError("Before and after image grids do not align.")
+    if previous is None:
+        before_scene, after_scene = pick_pair(catalog_scenes(bbox, flood_date, auth), flood_date)
+        pre, transform = radar_scene(before_scene, bbox, auth)
+        post, post_transform = radar_scene(after_scene, bbox, auth)
+        if not np.allclose(tuple(transform), tuple(post_transform)):
+            raise ValueError("Before and after image grids do not align.")
+        scenes = {"before": before_scene.product_id, "after": after_scene.product_id,
+                  "relative_orbit": before_scene.relative_orbit}
+    else:
+        previous_result, previous_imagery = previous
+        pre, post = previous_imagery[:2]
+        if pre.shape != post.shape or pre.shape[0] != 4:
+            raise ValueError("Previous radar images do not align.")
+        transform = from_bounds(*bbox, pre.shape[2], pre.shape[1])
+        scenes = previous_result["scenes"]
     optical = None
     optical_times = None
     optical_error = None
@@ -241,8 +252,7 @@ def run(bbox, flood_date):
     except ValueError as exc:
         optical_error = str(exc)
     result, graph = analyze(pre, post, transform, osm_features(bbox, flood_date), optical=optical)
-    result["scenes"] = {"before": before_scene.product_id, "after": after_scene.product_id,
-                        "relative_orbit": before_scene.relative_orbit}
+    result["scenes"] = scenes
     result["optical_dates"] = [time.isoformat() for time in optical_times] if optical_times else None
     result["optical_error"] = optical_error
     return result, graph, (pre, post, *(optical or ()))
