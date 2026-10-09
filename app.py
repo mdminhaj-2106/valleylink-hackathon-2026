@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).with_name(".env"))
 
 from copilot import answer_question_with_mode, report_html, situation_report
+from demo_case import CASE_PATH, load_case
 import valleylink
 from valleylink import ATTRIBUTION, run
 
@@ -20,15 +21,23 @@ st.set_page_config(page_title="ValleyLink", page_icon="🛰️", layout="wide")
 st.title("ValleyLink")
 st.caption("Satellite evidence → suspected road disruption → settlement access")
 
+if "analysis" not in st.session_state and CASE_PATH.exists():
+    analysis, bbox, case_date, imagery, captured_at = load_case()
+    st.session_state.analysis = analysis
+    st.session_state.imagery = imagery
+    st.session_state.bbox = bbox
+    st.session_state.flood_date = case_date
+    st.session_state.source = f"Bundled live-derived reference snapshot captured {captured_at[:10]}"
+
 with st.sidebar:
-    st.header("Run an analysis")
+    st.header("Optional live analysis")
     st.caption("Small bounding box, WGS84 longitude/latitude")
     west = st.number_input("West", value=85.318, format="%.5f")
     south = st.number_input("South", value=28.145, format="%.5f")
     east = st.number_input("East", value=85.353, format="%.5f")
     north = st.number_input("North", value=28.192, format="%.5f")
     flood_date = st.date_input("Flood date", value=date(2026, 8, 26))
-    submitted = st.button("Run from satellite data", type="primary", use_container_width=True)
+    submitted = st.button("Refresh from live satellite APIs", type="primary", use_container_width=True)
 
 if submitted:
     try:
@@ -51,14 +60,17 @@ if submitted:
         st.session_state.imagery = imagery
         st.session_state.bbox = bbox
         st.session_state.flood_date = flood_date
+        st.session_state.source = "Fresh live analysis"
         st.session_state.pop("analysis_error", None)
     except Exception as exc:
         st.session_state.analysis_error = str(exc)
 
 if "analysis_error" in st.session_state:
-    st.error(f"New analysis failed: {st.session_state.analysis_error}")
     if "analysis" in st.session_state:
-        st.warning("Showing the previous successful analysis below, not the failed request.")
+        st.warning(f"Live refresh unavailable: {st.session_state.analysis_error}. "
+                   "The saved analysis below is unchanged.")
+    else:
+        st.error(f"Live analysis failed: {st.session_state.analysis_error}")
 
 if "analysis" not in st.session_state:
     st.info("Enter an area and date, then run the analysis. Copernicus OAuth credentials are required; see README.")
@@ -66,6 +78,8 @@ if "analysis" not in st.session_state:
 
 result = st.session_state.analysis
 west, south, east, north = st.session_state.bbox
+st.info(st.session_state.get("source", "Previous successful analysis")
+        + " · This is a research demonstration, not confirmed field damage.")
 st.caption(f"Showing analysis for {st.session_state.flood_date} · WGS84 box {west:.3f}, {south:.3f}, {east:.3f}, {north:.3f}")
 scenes = result["scenes"]
 st.caption(f"Sentinel-1 relative orbit {scenes['relative_orbit']} · Before: {scenes['before']} · After: {scenes['after']}")
@@ -143,8 +157,8 @@ if selected:
                             get_color=[0, 188, 212], get_width=7, width_min_pixels=5))
 st.pydeck_chart(pdk.Deck(layers=layers, initial_view_state=pdk.ViewState(
     latitude=(south + north) / 2, longitude=(west + east) / 2, zoom=12),
-    tooltip={"text": "{name}"}), height=580, width="stretch")
-st.caption("Map key: amber = possible change · orange = stronger candidate · red = exposed road or possibly cut off settlement · purple = building · green = settlement with mapped access")
+    map_style=None, tooltip={"text": "{name}"}), height=580, width="stretch")
+st.caption("Offline map (no background tiles). Amber = possible change · orange = stronger candidate · red = exposed road or possibly cut off settlement · purple = building · green = settlement with mapped access")
 
 st.subheader("Situation report")
 language = st.radio("Language", ["English", "Nepali"], horizontal=True)
@@ -155,9 +169,10 @@ st.download_button("Download one-page report", report_html(result, language, st.
                    file_name="situation-report.html", mime="text/html")
 
 st.subheader("Ask about the map")
+use_model = st.checkbox("Use Groq for question interpretation (optional)", value=False)
 question = st.text_input("Question", placeholder="Which villages may have lost road access?")
 if question:
-    answer, ai_used = answer_question_with_mode(result, question, language)
+    answer, ai_used = answer_question_with_mode(result, question, language, use_model=use_model)
     st.caption("AI-assisted question interpretation" if ai_used else "Offline rule-based answer")
     st.write(answer)
 

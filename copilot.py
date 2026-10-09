@@ -203,7 +203,7 @@ def answer_question(result, question, language="English"):
     return answer_question_with_mode(result, question, language)[0]
 
 
-def answer_question_with_mode(result, question, language="English"):
+def answer_question_with_mode(result, question, language="English", *, use_model=True):
     """Return (answer, model_used) for honest UI labeling of each answer."""
     _language(language)
     if not question.strip():
@@ -214,7 +214,7 @@ def answer_question_with_mode(result, question, language="English"):
     if re.search(r"confirm|verified|destroy|safe|operational|प्रमाणित|पुष्टि|सुरक्षित",
                  question.casefold()):
         return _line(result, "limitations", language), False
-    model_intent = _model_intent(question)
+    model_intent = _model_intent(question) if use_model else None
     intent = model_intent or _local_intent(question)
     if intent == "summary":
         return situation_report(result, language), model_intent is not None

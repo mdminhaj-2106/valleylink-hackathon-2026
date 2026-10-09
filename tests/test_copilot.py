@@ -60,6 +60,12 @@ class CopilotTests(unittest.TestCase):
         self.assertEqual(answer_question_with_mode(FACTS, "How many bridges?"),
                          ("Potentially affected bridges: 1.", True))
 
+    @patch("copilot._model_intent", side_effect=AssertionError("Network must remain optional"))
+    def test_model_opt_out_never_calls_network(self, model):
+        self.assertEqual(answer_question_with_mode(FACTS, "Which villages are cut off?", use_model=False),
+                         ("Settlements that may have lost mapped road access to a town or hospital in the local road network: 1. Settlements: Village A.", False))
+        model.assert_not_called()
+
     @patch.dict("os.environ", {"OPENAI_API_KEY": "", "GROQ_API_KEY": ""})
     def test_offline_answer_is_labeled_rule_based(self):
         self.assertEqual(answer_question_with_mode(FACTS, "How many bridges?"),

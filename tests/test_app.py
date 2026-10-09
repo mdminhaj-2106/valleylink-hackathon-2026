@@ -11,6 +11,23 @@ EMPTY_GEOMETRY = {"type": "GeometryCollection", "geometries": []}
 
 
 class AppTests(unittest.TestCase):
+    def test_bundled_reference_opens_without_live_api_calls(self):
+        app = AppTest.from_file(Path(__file__).resolve().parents[1] / "app.py", default_timeout=30)
+        with patch("valleylink.run") as live_run, patch("valleylink.token") as token, \
+             patch("copilot._model_intent", side_effect=AssertionError("Q&A should remain offline")), \
+             patch("streamlit.pydeck_chart") as map_chart:
+            app.run()
+            app.text_input[0].set_value("Which settlements may be cut off?").run()
+            app.radio[0].set_value("Nepali").run()
+        live_run.assert_not_called()
+        token.assert_not_called()
+        self.assertEqual(len(app.metric), 5)
+        self.assertIn("Bundled live-derived", app.info[0].value)
+        self.assertIn("GeoJsonLayer", map_chart.call_args.args[0].to_json())
+        self.assertNotIn("basemaps.cartocdn.com", map_chart.call_args.args[0].to_json())
+        self.assertFalse(app.checkbox[0].value)
+        self.assertIn("प्रारम्भिक", app.text[0].value)
+
     def test_failed_rerun_keeps_and_labels_previous_result(self):
         result = {
             "scenes": {"before": "PRE", "after": "POST", "relative_orbit": 85},
@@ -47,8 +64,8 @@ class AppTests(unittest.TestCase):
             self.assertIs(run_analysis.call_args.kwargs["previous"][1][0], image)
             self.assertEqual(len(app.metric), 5)
             self.assertEqual(app.session_state["analysis"], result)
-            self.assertTrue(any("previous successful analysis" in warning.value for warning in app.warning))
-            self.assertIn("Copernicus timed out", app.error[0].value)
+            self.assertTrue(any("saved analysis below is unchanged" in warning.value for warning in app.warning))
+            self.assertIn("Copernicus timed out", app.warning[0].value)
             fresh_run = Mock(return_value=(result, None, (image, image)))
             with patch("importlib.reload", return_value=SimpleNamespace(run=fresh_run)) as reload_module:
                 app.button[0].click().run()

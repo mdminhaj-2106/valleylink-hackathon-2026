@@ -12,12 +12,14 @@ Python 3.11+ is recommended.
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env
-# Edit .env with your own keys; never commit or paste them into chat.
 streamlit run app.py
 ```
 
-Create a free Copernicus Data Space account and an OAuth client in [Sentinel Hub user settings](https://shapps.dataspace.copernicus.eu/dashboard/#/account/settings). Also get a free [ohsome v2 API key](https://account.heigit.org/). Its legacy v1 geometry endpoint currently returns HTTP 403. The app reads keys from `.env`, which Git ignores. Optionally set `GROQ_API_KEY` for model-assisted question interpretation; Groq takes priority over `OPENAI_API_KEY`, and answers remain map-derived even without either key. The default WGS84 box covers Syapru Besi (EMSR927 AOI01) for the 26 August 2026 event. The app finds same-orbit Sentinel-1 before/after scenes through the public CDSE STAC catalog (with authenticated Catalog fallback), then searches for a cloud-screened Sentinel-2 pair up to 30 days before and 14 days after the selected date. Radar change remains a lower-confidence context layer; if Sentinel-2 is unavailable, the app marks its impact estimates as radar-only. External Copernicus processing may time out; retry later or choose a smaller area if it does. A failed rerun keeps the previous successful result visibly labeled rather than discarding it.
+For optional live refresh, copy `.env.example` to `.env` and add your own keys. Never commit or paste them into chat.
+
+The app opens with a bundled, live-derived Syapru Besi reference case captured on 9 October 2026. It needs **no API keys or network** to display the imagery, impact map, scenarios, report, and rule-based Q&A. The reference is a fixed snapshot, not a fresh analysis or a confirmed damage map. To analyze another area/date or refresh it, create a free Copernicus Data Space account and OAuth client in [Sentinel Hub user settings](https://shapps.dataspace.copernicus.eu/dashboard/#/account/settings), plus an [ohsome v2 API key](https://account.heigit.org/). The app reads keys from `.env`, which Git ignores. Optionally set `GROQ_API_KEY` and opt in on the Q&A panel for model-assisted question interpretation; Groq takes priority over `OPENAI_API_KEY`, and answers remain map-derived even without either key. Live mode finds same-orbit Sentinel-1 scenes through public CDSE STAC (with Catalog fallback), then searches for a cloud-screened Sentinel-2 pair up to 30 days before and 14 days after the selected date. External processing can time out; a failed refresh leaves the last displayed analysis intact.
+
+With credentials set, `python demo_case.py` recaptures the reference from live Sentinel-1, Sentinel-2, and historical OSM data. It replaces the bundled file only after an optical analysis succeeds. The file stores source scene IDs, acquisition dates, computed results, and four image arrays; it contains no API credentials.
 
 Run the synthetic checks with `pip install pytest` and `python -m pytest tests -q`.
 
