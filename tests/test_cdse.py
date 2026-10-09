@@ -171,6 +171,38 @@ class CdseTests(unittest.TestCase):
             cdse.sentinel2_pair([85.32, 28.15, 85.35, 28.19], date(2026, 8, 26), "token", width=64)
         self.assertEqual(sum(call.args[0].endswith("/process/v1") for call in post.call_args_list), 3)
 
+    def test_sentinel2_tries_another_date_after_transport_failure(self):
+        import numpy as np
+        from rasterio.io import MemoryFile
+        from rasterio.transform import from_origin
+
+        with MemoryFile() as mem:
+            with mem.open(driver="GTiff", width=64, height=64, count=6, dtype="float32",
+                          crs="EPSG:4326", transform=from_origin(85, 28, 0.01, 0.01)) as raster:
+                bands = np.ones((6, 64, 64), dtype="float32")
+                bands[4] = 4
+                raster.write(bands)
+            tiff = mem.read()
+        before = {"features": [{"properties": {"datetime": "2026-08-24T05:00:00Z", "eo:cloud_cover": 10}},
+                               {"properties": {"datetime": "2026-08-12T05:00:00Z", "eo:cloud_cover": 20}}]}
+        after = {"features": [{"properties": {"datetime": "2026-08-27T05:00:00Z", "eo:cloud_cover": 10}}]}
+        attempts = []
+
+        def respond(url, payload, **_kwargs):
+            if url.endswith("/catalog/v1/search"):
+                return json.dumps(before if payload["datetime"].startswith("2026-07") else after).encode()
+            day = payload["input"]["data"][0]["dataFilter"]["timeRange"]["from"][:10]
+            attempts.append(day)
+            if day == "2026-08-24":
+                raise ValueError("Copernicus API unavailable: TLS handshake timed out")
+            return tiff
+
+        with patch.object(cdse, "_post", side_effect=respond):
+            _pre, _post, _transform, pre_time, post_time = cdse.sentinel2_pair(
+                [85.32, 28.15, 85.35, 28.19], date(2026, 8, 26), "token", width=64)
+        self.assertEqual((pre_time.date(), post_time.date()), (date(2026, 8, 12), date(2026, 8, 27)))
+        self.assertEqual(attempts.count("2026-08-24"), 2)
+
     def test_socket_timeout_is_a_catchable_optical_error(self):
         with patch.object(cdse, "urlopen", side_effect=TimeoutError("The read operation timed out")):
             with self.assertRaisesRegex(ValueError, "timed out after 20s"):

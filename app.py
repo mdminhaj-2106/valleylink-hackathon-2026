@@ -131,7 +131,7 @@ if selected:
     folium.PolyLine([[a[1], a[0]], [b[1], b[0]]], color="#00bcd4", weight=7,
                     tooltip="Scenario crossing").add_to(map_view)
 folium.LayerControl().add_to(map_view)
-st.components.v1.html(map_view._repr_html_(), height=580)
+st.components.v1.html(map_view.get_root().render(), height=580)
 
 st.subheader("Situation report")
 language = st.radio("Language", ["English", "Nepali"], horizontal=True)

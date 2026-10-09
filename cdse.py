@@ -303,7 +303,7 @@ def sentinel2_pair(bbox, flood_date, auth, *, pre_date=None, post_date=None, wid
             try:
                 return fetch(timestamp)
             except ValueError as exc:
-                if str(exc).startswith("Copernicus API") or "time budget" in str(exc):
+                if "time budget" in str(exc) or str(exc).startswith("Copernicus API HTTP"):
                     raise ValueError(f"Sentinel-2 {timestamp.date()}: {exc}") from exc
                 errors.append(f"{timestamp.date()}: {exc}")
         raise ValueError("No usable Sentinel-2 raster: " + "; ".join(errors))

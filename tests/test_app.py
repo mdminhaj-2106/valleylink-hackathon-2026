@@ -21,12 +21,15 @@ class AppTests(unittest.TestCase):
             "affected_roads": [], "settlements": [],
         }
         image = np.ones((4, 2, 2), dtype="float32")
-        app = AppTest.from_file(Path(__file__).resolve().parents[1] / "app.py")
+        app = AppTest.from_file(Path(__file__).resolve().parents[1] / "app.py", default_timeout=30)
         with patch("valleylink.run", side_effect=[(result, None, (image, image)),
-                                                   ValueError("Copernicus timed out")]):
+                                                   ValueError("Copernicus timed out")]), \
+             patch("streamlit.components.v1.html") as embed:
             app.run()
             app.button[0].click().run()
             self.assertEqual(len(app.metric), 5)
+            self.assertIn("<script", embed.call_args.args[0])
+            self.assertNotIn("<iframe", embed.call_args.args[0])
             app.button[0].click().run()
         self.assertEqual(len(app.metric), 5)
         self.assertEqual(app.session_state["analysis"], result)
