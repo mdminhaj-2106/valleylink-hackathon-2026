@@ -3,8 +3,8 @@
 from datetime import date
 from pathlib import Path
 
-import folium
 import numpy as np
+import pydeck as pdk
 import streamlit as st
 from dotenv import load_dotenv
 
@@ -102,36 +102,34 @@ elif not result["access_available"]:
 else:
     st.write("No single suspected crossing restores access within this area.")
 
-map_view = folium.Map(location=[(south + north)/2, (west + east)/2], zoom_start=11,
-                      tiles="OpenStreetMap")
-map_view.fit_bounds([[south, west], [north, east]])
+layers = []
 if result["possible_geometry"]["type"] != "GeometryCollection":
-    folium.GeoJson(result["possible_geometry"], name="Possible radar or optical change",
-                   style_function=lambda _: {"color": "#ffbd59", "fillOpacity": 0.25, "weight": 1}).add_to(map_view)
+    layers.append(pdk.Layer("GeoJsonLayer", {"type": "Feature", "geometry": result["possible_geometry"], "properties": {}},
+                            filled=True, get_fill_color=[255, 189, 89, 70], get_line_color=[255, 189, 89, 200]))
 if result["strict_geometry"]["type"] != "GeometryCollection":
-    folium.GeoJson(result["strict_geometry"], name="Optical candidate change" if result["evidence_mode"] == "optical" else "Radar candidate change",
-                   style_function=lambda _: {"color": "#e56719", "fillOpacity": 0.65, "weight": 1}).add_to(map_view)
+    layers.append(pdk.Layer("GeoJsonLayer", {"type": "Feature", "geometry": result["strict_geometry"], "properties": {}},
+                            filled=True, get_fill_color=[229, 103, 25, 165], get_line_color=[229, 103, 25, 255]))
 if result["affected_roads"]:
-    folium.GeoJson({"type": "FeatureCollection", "features": result["affected_roads"]},
-                   name="Potentially affected roads",
-                   style_function=lambda _: {"color": "#b22222", "weight": 3}).add_to(map_view)
+    layers.append(pdk.Layer("GeoJsonLayer", {"type": "FeatureCollection", "features": result["affected_roads"]},
+                            filled=False, get_line_color=[178, 34, 34, 255], get_line_width=4, line_width_min_pixels=3))
 if result["buildings"]:
-    folium.GeoJson({"type": "FeatureCollection", "features": result["buildings"]},
-                   name="Potentially affected buildings",
-                   style_function=lambda _: {"color": "#653b9c", "fillOpacity": 0.6}).add_to(map_view)
+    layers.append(pdk.Layer("GeoJsonLayer", {"type": "FeatureCollection", "features": result["buildings"]},
+                            filled=True, get_fill_color=[101, 59, 156, 165], get_line_color=[101, 59, 156, 255]))
 cutoff_ids = {place["id"] for place in result["cutoff"]}
-for place in result["settlements"]:
-    cut_off = place["id"] in cutoff_ids
-    folium.CircleMarker(location=[place["point"][1], place["point"][0]], radius=6,
-                        color="#c02a2a" if cut_off else "#16845b", fill=True,
-                        tooltip=("Possibly cut off: " if cut_off else "Road access retained: ")
-                                + place["name"]).add_to(map_view)
+for cut_off, color in ((False, [22, 132, 91]), (True, [192, 42, 42])):
+    places = [{"position": place["point"], "name": place["name"]}
+              for place in result["settlements"] if (place["id"] in cutoff_ids) == cut_off]
+    if places:
+        layers.append(pdk.Layer("ScatterplotLayer", places, get_position="position", get_fill_color=color,
+                                get_radius=70, radius_min_pixels=6, pickable=True))
 if selected:
     a, b = selected["edge"]
-    folium.PolyLine([[a[1], a[0]], [b[1], b[0]]], color="#00bcd4", weight=7,
-                    tooltip="Scenario crossing").add_to(map_view)
-folium.LayerControl().add_to(map_view)
-st.components.v1.html(map_view.get_root().render(), height=580)
+    layers.append(pdk.Layer("PathLayer", [{"path": [a, b]}], get_path="path",
+                            get_color=[0, 188, 212], get_width=7, width_min_pixels=5))
+st.pydeck_chart(pdk.Deck(layers=layers, initial_view_state=pdk.ViewState(
+    latitude=(south + north) / 2, longitude=(west + east) / 2, zoom=12),
+    tooltip={"text": "{name}"}), height=580, width="stretch")
+st.caption("Map key: amber = possible change · orange = stronger candidate · red = exposed road or possibly cut off settlement · purple = building · green = settlement with mapped access")
 
 st.subheader("Situation report")
 language = st.radio("Language", ["English", "Nepali"], horizontal=True)

@@ -15,21 +15,31 @@ class AppTests(unittest.TestCase):
             "scenes": {"before": "PRE", "after": "POST", "relative_orbit": 85},
             "optical_dates": None, "optical_error": "clouds", "evidence_mode": "radar-only",
             "flood_km2": 1.25, "buildings": [], "affected_road_km": 0,
-            "affected_bridge_ids": [], "cutoff": [], "access_available": True,
-            "valid_fraction": 0.8, "optical_clear_fraction": None, "scenarios": [],
-            "possible_geometry": EMPTY_GEOMETRY, "strict_geometry": EMPTY_GEOMETRY,
-            "affected_roads": [], "settlements": [],
+            "affected_bridge_ids": [],
+            "cutoff": [{"id": "village/1", "name": "Village", "point": [85.325, 28.155]}],
+            "access_available": True,
+            "valid_fraction": 0.8, "optical_clear_fraction": None,
+            "scenarios": [{"feature_id": "way/1", "restored": 1,
+                           "edge": ((85.32, 28.15), (85.33, 28.16))}],
+            "possible_geometry": EMPTY_GEOMETRY,
+            "strict_geometry": {"type": "Polygon", "coordinates": [[[85.32, 28.15], [85.33, 28.15],
+                                                                   [85.33, 28.16], [85.32, 28.15]]]},
+            "affected_roads": [{"type": "Feature", "properties": {}, "geometry": {
+                "type": "LineString", "coordinates": [[85.32, 28.15], [85.33, 28.16]]}}],
+            "settlements": [{"id": "village/1", "name": "Village", "point": [85.325, 28.155]}],
         }
         image = np.ones((4, 2, 2), dtype="float32")
         app = AppTest.from_file(Path(__file__).resolve().parents[1] / "app.py", default_timeout=30)
         with patch("valleylink.run", side_effect=[(result, None, (image, image)),
                                                    ValueError("Copernicus timed out")]), \
-             patch("streamlit.components.v1.html") as embed:
+             patch("streamlit.pydeck_chart") as map_chart:
             app.run()
             app.button[0].click().run()
             self.assertEqual(len(app.metric), 5)
-            self.assertIn("<script", embed.call_args.args[0])
-            self.assertNotIn("<iframe", embed.call_args.args[0])
+            map_json = map_chart.call_args.args[0].to_json()
+            for layer in ("GeoJsonLayer", "ScatterplotLayer", "PathLayer"):
+                self.assertIn(layer, map_json)
+            self.assertEqual(map_chart.call_args.kwargs["height"], 580)
             app.button[0].click().run()
         self.assertEqual(len(app.metric), 5)
         self.assertEqual(app.session_state["analysis"], result)
