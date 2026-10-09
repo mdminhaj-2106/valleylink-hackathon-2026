@@ -139,6 +139,26 @@ class CdseTests(unittest.TestCase):
         self.assertEqual(sum(url.endswith("/process/v1") for url, _ in calls), 1)
         self.assertLessEqual(calls[-1][1]["timeout"], 20)
 
+    def test_sentinel2_retries_one_transient_transport_failure(self):
+        import numpy as np
+        from rasterio.io import MemoryFile
+        from rasterio.transform import from_origin
+
+        with MemoryFile() as mem:
+            with mem.open(driver="GTiff", width=64, height=64, count=6, dtype="float32",
+                          crs="EPSG:4326", transform=from_origin(85, 28, 0.01, 0.01)) as raster:
+                bands = np.ones((6, 64, 64), dtype="float32")
+                bands[4] = 4
+                raster.write(bands)
+            tiff = mem.read()
+        catalog = lambda day: json.dumps({"features": [{"properties": {
+            "datetime": f"2026-08-{day}T05:00:00Z", "eo:cloud_cover": 10}}]}).encode()
+        responses = [catalog("12"), catalog("27"),
+                     ValueError("Copernicus API unavailable: TLS handshake timed out"), tiff, tiff]
+        with patch.object(cdse, "_post", side_effect=responses) as post:
+            cdse.sentinel2_pair([85.32, 28.15, 85.35, 28.19], date(2026, 8, 26), "token", width=64)
+        self.assertEqual(sum(call.args[0].endswith("/process/v1") for call in post.call_args_list), 3)
+
     def test_socket_timeout_is_a_catchable_optical_error(self):
         with patch.object(cdse, "urlopen", side_effect=TimeoutError("The read operation timed out")):
             with self.assertRaisesRegex(ValueError, "timed out after 20s"):

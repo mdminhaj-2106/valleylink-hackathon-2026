@@ -1,4 +1,6 @@
+import json
 import unittest
+from io import BytesIO
 from unittest.mock import patch
 
 from copilot import answer_question, answer_question_with_mode, report_html, situation_report
@@ -17,7 +19,7 @@ FACTS = {
 
 
 class CopilotTests(unittest.TestCase):
-    @patch.dict("os.environ", {"OPENAI_API_KEY": ""})
+    @patch.dict("os.environ", {"OPENAI_API_KEY": "", "GROQ_API_KEY": ""})
     def test_report_and_questions_use_only_computed_numbers(self):
         report = situation_report(FACTS)
         self.assertIn("1.25 km²", report)
@@ -30,7 +32,7 @@ class CopilotTests(unittest.TestCase):
         self.assertIn("way/7", answer_question(FACTS, "Which crossing restores access?"))
         self.assertIn("बस्ती: 1", answer_question(FACTS, "कति बस्तीको पहुँच बन्द भयो?", "Nepali"))
 
-    @patch.dict("os.environ", {"OPENAI_API_KEY": ""})
+    @patch.dict("os.environ", {"OPENAI_API_KEY": "", "GROQ_API_KEY": ""})
     def test_missing_data_never_becomes_zero_or_guess(self):
         self.assertIn("does not contain", answer_question({}, "How many bridges?"))
         self.assertNotIn("0", situation_report({}))
@@ -40,7 +42,7 @@ class CopilotTests(unittest.TestCase):
         self.assertIn("Field checks", answer_question(FACTS, "How many bridges are confirmed destroyed?"))
         self.assertIn("Field checks", answer_question(FACTS, "Are these roads safe?"))
 
-    @patch.dict("os.environ", {"OPENAI_API_KEY": ""})
+    @patch.dict("os.environ", {"OPENAI_API_KEY": "", "GROQ_API_KEY": ""})
     def test_unavailable_road_access_is_not_reported_as_zero(self):
         result = {**FACTS, "access_available": False, "cutoff": [], "scenarios": []}
         for text in (situation_report(result),
@@ -58,12 +60,12 @@ class CopilotTests(unittest.TestCase):
         self.assertEqual(answer_question_with_mode(FACTS, "How many bridges?"),
                          ("Potentially affected bridges: 1.", True))
 
-    @patch.dict("os.environ", {"OPENAI_API_KEY": ""})
+    @patch.dict("os.environ", {"OPENAI_API_KEY": "", "GROQ_API_KEY": ""})
     def test_offline_answer_is_labeled_rule_based(self):
         self.assertEqual(answer_question_with_mode(FACTS, "How many bridges?"),
                          ("Potentially affected bridges: 1.", False))
 
-    @patch.dict("os.environ", {"OPENAI_API_KEY": ""})
+    @patch.dict("os.environ", {"OPENAI_API_KEY": "", "GROQ_API_KEY": ""})
     def test_optical_impact_provenance_and_bilingual_scenes(self):
         result = {**FACTS, "evidence_mode": "optical",
                   "optical_dates": ["2026-08-12T00:00:00Z", "2026-08-27T00:00:00Z"],
@@ -75,6 +77,17 @@ class CopilotTests(unittest.TestCase):
         self.assertIn("candidate impact layer comes from Sentinel-2", answer_question(result, "What evidence supports the impact map?"))
         self.assertIn("सेन्टिनेल-२: पहिले 2026-08-12", answer_question(result, "कुन उपग्रह चित्र?", "Nepali"))
         self.assertIn("65%", situation_report(result, "Nepali"))
+
+    @patch.dict("os.environ", {"GROQ_API_KEY": "test-groq", "OPENAI_API_KEY": "test-openai"})
+    def test_groq_takes_priority_and_only_classifies(self):
+        response = {"output": [{"content": [{"type": "output_text", "text": '{"intent":"bridges"}'}]}]}
+        with patch("copilot.urlopen", return_value=BytesIO(json.dumps(response).encode())) as open_url:
+            answer, model_used = answer_question_with_mode(FACTS, "How many bridges?")
+        request = open_url.call_args.args[0]
+        self.assertEqual(request.full_url, "https://api.groq.com/openai/v1/responses")
+        self.assertEqual(request.get_header("User-agent"), "ValleyLink/0.1")
+        self.assertEqual(json.loads(request.data)["model"], "openai/gpt-oss-20b")
+        self.assertEqual((answer, model_used), ("Potentially affected bridges: 1.", True))
 
     def test_print_report_escapes_untrusted_fields_and_uses_computed_facts(self):
         result = {**FACTS, "cutoff": [{"name": "<script>alert(1)</script>"}]}

@@ -166,19 +166,25 @@ def _local_intent(question):
 
 
 def _model_intent(question):
-    key = os.getenv("OPENAI_API_KEY")
+    groq_key = os.getenv("GROQ_API_KEY")
+    key = groq_key or os.getenv("OPENAI_API_KEY")
     if not key:
         return None
     schema = {"type": "object", "properties": {"intent": {"type": "string", "enum": list(INTENTS)}},
               "required": ["intent"], "additionalProperties": False}
-    payload = {"model": os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+    payload = {"model": (os.getenv("GROQ_MODEL", "openai/gpt-oss-20b") if groq_key
+                         else os.getenv("OPENAI_MODEL", "gpt-4o-mini")),
                "instructions": "Classify the user question into one intent. Use provenance for questions about data sources or how the impact layer was made. Return unknown for facts outside a satellite flood and road-access analysis. Do not answer the question.",
                "input": question,
                "text": {"format": {"type": "json_schema", "name": "question_intent", "strict": True,
                                    "schema": schema}},
-               "max_output_tokens": 64}
-    request = Request("https://api.openai.com/v1/responses", data=json.dumps(payload).encode(),
-                      headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"})
+               "max_output_tokens": 256 if groq_key else 64}
+    if groq_key:
+        payload["reasoning"] = {"effort": "low"}
+    url = "https://api.groq.com/openai/v1/responses" if groq_key else "https://api.openai.com/v1/responses"
+    request = Request(url, data=json.dumps(payload).encode(),
+                      headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json",
+                               "User-Agent": "ValleyLink/0.1"})
     try:
         with urlopen(request, timeout=20) as response:
             data = json.load(response)

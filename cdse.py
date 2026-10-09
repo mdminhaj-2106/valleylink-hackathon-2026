@@ -257,10 +257,17 @@ def sentinel2_pair(bbox, flood_date, auth, *, pre_date=None, post_date=None, wid
                    "output": {"width": width, "height": height,
                               "responses": [{"identifier": "default", "format": {"type": "image/tiff"}}]},
                    "evalscript": S2_EVALSCRIPT}
-        remaining = deadline - time.monotonic()
-        if remaining < 1:
-            raise ValueError("Sentinel-2 search exceeded its 60-second time budget.")
-        data = _post(f"{BASE}/process/v1", payload, bearer=auth, timeout=min(20, remaining))
+        for attempt in range(2):
+            remaining = deadline - time.monotonic()
+            if remaining < 1:
+                raise ValueError("Sentinel-2 search exceeded its 60-second time budget.")
+            try:
+                data = _post(f"{BASE}/process/v1", payload, bearer=auth, timeout=min(20, remaining))
+                break
+            except ValueError as exc:
+                if attempt or not (str(exc).startswith("Copernicus API unavailable")
+                                   or str(exc).startswith("Copernicus API timed out")):
+                    raise
         try:
             with MemoryFile(data) as mem, mem.open() as raster:
                 bands, transform = raster.read(), raster.transform
