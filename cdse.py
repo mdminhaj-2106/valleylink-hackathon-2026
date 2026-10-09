@@ -231,8 +231,24 @@ def sentinel2_pair(bbox, flood_date, auth, *, pre_date=None, post_date=None, wid
         query = {"bbox": list(bbox), "datetime": f"{begin.isoformat()}/{finish.isoformat()}",
                  "collections": ["sentinel-2-l2a"], "limit": 100}
         best_by_day = {}
-        for _ in range(10):
-            catalog = json.loads(_post(f"{BASE}/catalog/v1/search", query, bearer=auth, timeout=15))
+        try:
+            catalog = json.loads(_post(STAC, {**query, "fields": {"include": [
+                "id", "properties.datetime", "properties.eo:cloud_cover"]}}, timeout=15))
+            if any(link.get("rel") == "next" for link in catalog.get("links", [])):
+                raise ValueError("Public optical catalog needs pagination.")
+            catalogs = [catalog]
+        except ValueError:
+            catalogs = []
+            for _ in range(10):
+                catalog = json.loads(_post(f"{BASE}/catalog/v1/search", query, bearer=auth, timeout=15))
+                catalogs.append(catalog)
+                next_token = catalog.get("context", {}).get("next")
+                if next_token is None:
+                    break
+                query["next"] = next_token
+            else:
+                raise ValueError("Optical catalog returned too many pages; choose a smaller area.")
+        for catalog in catalogs:
             for item in catalog.get("features", []):
                 properties = item.get("properties", {})
                 try:
@@ -248,23 +264,25 @@ def sentinel2_pair(bbox, flood_date, auth, *, pre_date=None, post_date=None, wid
                     current = best_by_day.get(timestamp.date())
                     if current is None or cloud < current[0]:
                         best_by_day[timestamp.date()] = (cloud, timestamp)
-            next_token = catalog.get("context", {}).get("next")
-            if next_token is None:
-                break
-            query["next"] = next_token
-        else:
-            raise ValueError("Optical catalog returned too many pages; choose a smaller area.")
-        # shortcut: two dates per side keep a live run bounded; widen for batch evaluation.
-        selected = sorted(best_by_day.values(), key=lambda entry: (entry[0], -entry[1].timestamp()))[:2]
+        # Try the nearest image first; keep the clearest tile as a distinct backup.
+        nearest = sorted(best_by_day.values(), key=lambda entry: (
+            abs((entry[1].date() - flood_date).days), entry[0]))
+        clearest = min(nearest, key=lambda entry: entry[0], default=None)
+        selected = nearest[:1]
+        if clearest and clearest not in selected:
+            selected.append(clearest)
+        elif len(nearest) > 1:
+            selected.append(nearest[1])
         return [timestamp for _, timestamp in selected]
 
     attempted = set()
 
     def fetch(timestamp):
         attempted.add(timestamp)
-        # A narrow interval selects the cataloged overpass, including adjacent tiles.
-        timerange = {"from": timestamp.isoformat().replace("+00:00", "Z"),
-                     "to": (timestamp + timedelta(minutes=5)).isoformat().replace("+00:00", "Z")}
+        # Use the whole acquisition day so adjacent tiles with offset timestamps are included.
+        day = datetime.combine(timestamp.date(), datetime.min.time(), timezone.utc)
+        timerange = {"from": day.isoformat().replace("+00:00", "Z"),
+                     "to": (day + timedelta(days=1)).isoformat().replace("+00:00", "Z")}
         payload = {"input": {"bounds": {"bbox": list(bbox)},
                              "data": [{"type": "sentinel-2-l2a", "dataFilter": {"timeRange": timerange}}]},
                    "output": {"width": width, "height": height,
@@ -278,8 +296,7 @@ def sentinel2_pair(bbox, flood_date, auth, *, pre_date=None, post_date=None, wid
                 data = _post(f"{BASE}/process/v1", payload, bearer=auth, timeout=min(20, remaining))
                 break
             except ValueError as exc:
-                if attempt or not (str(exc).startswith("Copernicus API unavailable")
-                                   or str(exc).startswith("Copernicus API timed out")):
+                if attempt or not str(exc).startswith("Copernicus API unavailable"):
                     raise
         try:
             with MemoryFile(data) as mem, mem.open() as raster:
@@ -331,9 +348,9 @@ def sentinel2_pair(bbox, flood_date, auth, *, pre_date=None, post_date=None, wid
                     try:
                         images.append(fetch(timestamp))
                     except ValueError as exc:
-                        if str(exc).startswith("Copernicus API") or "time budget" in str(exc):
-                            raise ValueError(f"Sentinel-2 {timestamp.date()}: {exc}") from exc
                         errors.append(f"{timestamp.date()}: {exc}")
+                        if "time budget" in str(exc):
+                            break
         best = rank()
     coverage, pre_time, post_time, pre, post, transform = best
     if coverage < 0.2:

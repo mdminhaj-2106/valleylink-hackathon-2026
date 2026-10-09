@@ -88,8 +88,8 @@ class CdseTests(unittest.TestCase):
                                                  "eo:cloud_cover": 90}}]}
         post_catalog = {"features": [{"properties": {"datetime": "2026-08-27T05:00:00Z",
                                                   "eo:cloud_cover": 78}}]}
-        responses = [json.dumps(pre_catalog).encode(), json.dumps(post_catalog).encode(),
-                     tiff, tiff]
+        responses = [ValueError("Public STAC unavailable"), json.dumps(pre_catalog).encode(),
+                     json.dumps(post_catalog).encode(), tiff, tiff]
         with patch.object(cdse, "_post", side_effect=responses) as post:
             pre, after, transform, pre_time, after_time = cdse.sentinel2_pair(
                 [85.32, 28.15, 85.35, 28.19], date(2026, 8, 26), "token", width=64)
@@ -97,10 +97,13 @@ class CdseTests(unittest.TestCase):
         self.assertTrue(np.array_equal(pre, after))
         self.assertEqual(pre_time.date(), date(2026, 8, 12))
         self.assertEqual(after_time.date(), date(2026, 8, 27))
-        self.assertEqual(post.call_args_list[2].args[1]["input"]["data"][0]["dataFilter"]["timeRange"]["from"],
-                         "2026-08-12T05:00:00Z")
-        self.assertEqual(post.call_args_list[3].args[1]["evalscript"], cdse.S2_EVALSCRIPT)
-        self.assertEqual(len(post.call_args_list), 4)  # two catalog + two Process calls
+        self.assertEqual(post.call_args_list[1].args[0], f"{cdse.BASE}/catalog/v1/search")
+        self.assertEqual(post.call_args_list[3].args[1]["input"]["data"][0]["dataFilter"]["timeRange"]["from"],
+                         "2026-08-12T00:00:00Z")
+        self.assertEqual(post.call_args_list[3].args[1]["input"]["data"][0]["dataFilter"]["timeRange"]["to"],
+                         "2026-08-13T00:00:00Z")
+        self.assertEqual(post.call_args_list[4].args[1]["evalscript"], cdse.S2_EVALSCRIPT)
+        self.assertEqual(len(post.call_args_list), 5)  # one catalog fallback + two Process calls
 
     def test_sentinel2_search_uses_aoi_clear_coverage_over_tile_cloud_score(self):
         import numpy as np
@@ -123,7 +126,7 @@ class CdseTests(unittest.TestCase):
                               {"properties": {"datetime": "2026-08-30T05:00:00Z", "eo:cloud_cover": 5}}]}
 
         def respond(url, payload, **_kwargs):
-            if url.endswith("/catalog/v1/search"):
+            if url == cdse.STAC:
                 return json.dumps(before if payload["datetime"].startswith("2026-07") else after).encode()
             day = payload["input"]["data"][0]["dataFilter"]["timeRange"]["from"][:10]
             return clear if day in {"2026-08-24", "2026-08-27"} else cloudy
@@ -132,7 +135,7 @@ class CdseTests(unittest.TestCase):
             _pre, _post, _transform, pre_time, post_time = cdse.sentinel2_pair(
                 [85.32, 28.15, 85.35, 28.19], date(2026, 8, 26), "token", width=64)
         self.assertEqual((pre_time.date(), post_time.date()), (date(2026, 8, 24), date(2026, 8, 27)))
-        self.assertLessEqual(sum(call.args[0].endswith("/process/v1") for call in post.call_args_list), 4)
+        self.assertEqual(sum(call.args[0].endswith("/process/v1") for call in post.call_args_list), 2)
 
     def test_sentinel2_process_failure_keeps_api_cause_and_short_timeout(self):
         before = {"features": [{"properties": {"datetime": "2026-08-12T05:00:00Z", "eo:cloud_cover": 10}}]}
@@ -141,7 +144,7 @@ class CdseTests(unittest.TestCase):
 
         def respond(url, payload, **kwargs):
             calls.append((url, kwargs))
-            if url.endswith("/catalog/v1/search"):
+            if url == cdse.STAC:
                 return json.dumps(before if payload["datetime"].startswith("2026-07") else after).encode()
             raise ValueError("Copernicus API HTTP 429: rate limit exceeded")
 
@@ -171,7 +174,7 @@ class CdseTests(unittest.TestCase):
             cdse.sentinel2_pair([85.32, 28.15, 85.35, 28.19], date(2026, 8, 26), "token", width=64)
         self.assertEqual(sum(call.args[0].endswith("/process/v1") for call in post.call_args_list), 3)
 
-    def test_sentinel2_tries_another_date_after_transport_failure(self):
+    def test_sentinel2_tries_another_date_without_retrying_a_full_timeout(self):
         import numpy as np
         from rasterio.io import MemoryFile
         from rasterio.transform import from_origin
@@ -189,19 +192,53 @@ class CdseTests(unittest.TestCase):
         attempts = []
 
         def respond(url, payload, **_kwargs):
-            if url.endswith("/catalog/v1/search"):
+            if url == cdse.STAC:
                 return json.dumps(before if payload["datetime"].startswith("2026-07") else after).encode()
             day = payload["input"]["data"][0]["dataFilter"]["timeRange"]["from"][:10]
             attempts.append(day)
             if day == "2026-08-24":
-                raise ValueError("Copernicus API unavailable: TLS handshake timed out")
+                raise ValueError("Copernicus API timed out after 20s: read timed out")
             return tiff
 
         with patch.object(cdse, "_post", side_effect=respond):
             _pre, _post, _transform, pre_time, post_time = cdse.sentinel2_pair(
                 [85.32, 28.15, 85.35, 28.19], date(2026, 8, 26), "token", width=64)
         self.assertEqual((pre_time.date(), post_time.date()), (date(2026, 8, 12), date(2026, 8, 27)))
-        self.assertEqual(attempts.count("2026-08-24"), 2)
+        self.assertEqual(attempts.count("2026-08-24"), 1)
+
+    def test_sentinel2_keeps_usable_pair_when_optional_improvement_times_out(self):
+        import numpy as np
+        from rasterio.io import MemoryFile
+        from rasterio.transform import from_origin
+
+        def image(cloudy=False):
+            with MemoryFile() as mem:
+                with mem.open(driver="GTiff", width=64, height=64, count=6, dtype="float32",
+                              crs="EPSG:4326", transform=from_origin(85, 28, 0.01, 0.01)) as raster:
+                    bands = np.ones((6, 64, 64), dtype="float32")
+                    bands[4] = 8 if cloudy else 4
+                    if cloudy:
+                        bands[4, :20] = 4
+                    raster.write(bands)
+                return mem.read()
+
+        before = {"features": [{"properties": {"datetime": "2026-08-24T05:00:00Z", "eo:cloud_cover": 80}},
+                               {"properties": {"datetime": "2026-08-12T05:00:00Z", "eo:cloud_cover": 10}}]}
+        after = {"features": [{"properties": {"datetime": "2026-08-27T05:00:00Z", "eo:cloud_cover": 70}}]}
+
+        def respond(url, payload, **_kwargs):
+            if url == cdse.STAC:
+                return json.dumps(before if payload["datetime"].startswith("2026-07") else after).encode()
+            day = payload["input"]["data"][0]["dataFilter"]["timeRange"]["from"][:10]
+            if day == "2026-08-12":
+                raise ValueError("Copernicus API timed out after 20s: read timed out")
+            return image(cloudy=day == "2026-08-27")
+
+        with patch.object(cdse, "_post", side_effect=respond):
+            pre, post, _transform, pre_time, post_time = cdse.sentinel2_pair(
+                [85.32, 28.15, 85.35, 28.19], date(2026, 8, 26), "token", width=64)
+        self.assertEqual((pre_time.date(), post_time.date()), (date(2026, 8, 24), date(2026, 8, 27)))
+        self.assertGreater(np.isin(post[4], [2, 4, 5, 6]).mean(), 0.2)
 
     def test_socket_timeout_is_a_catchable_optical_error(self):
         with patch.object(cdse, "urlopen", side_effect=TimeoutError("The read operation timed out")):
