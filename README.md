@@ -17,7 +17,7 @@ cp .env.example .env
 streamlit run app.py
 ```
 
-Create a free Copernicus Data Space account and an OAuth client in [Sentinel Hub user settings](https://shapps.dataspace.copernicus.eu/dashboard/#/account/settings). Also get a free [ohsome v2 API key](https://account.heigit.org/). Its legacy v1 geometry endpoint currently returns HTTP 403. The app reads keys from `.env`, which Git ignores. The default WGS84 box covers Syapru Besi (EMSR927 AOI01) for the 26 August 2026 event. The app finds same-orbit Sentinel-1 before/after scenes, then uses cloud-screened Sentinel-2 vegetation-loss/new-water candidates where the default 12/27 August images are available. Radar change remains a lower-confidence context layer; if Sentinel-2 is unavailable, the app marks its impact estimates as radar-only.
+Create a free Copernicus Data Space account and an OAuth client in [Sentinel Hub user settings](https://shapps.dataspace.copernicus.eu/dashboard/#/account/settings). Also get a free [ohsome v2 API key](https://account.heigit.org/). Its legacy v1 geometry endpoint currently returns HTTP 403. The app reads keys from `.env`, which Git ignores. The default WGS84 box covers Syapru Besi (EMSR927 AOI01) for the 26 August 2026 event. The app finds same-orbit Sentinel-1 before/after scenes, then searches for a cloud-screened Sentinel-2 pair up to 30 days before and 14 days after the selected date. Radar change remains a lower-confidence context layer; if Sentinel-2 is unavailable, the app marks its impact estimates as radar-only. External Copernicus processing may time out; retry later or choose a smaller area if it does.
 
 Run the synthetic checks with `pip install pytest` and `python -m pytest tests -q`.
 
@@ -39,11 +39,11 @@ The [official EMSR927 maps](https://mapping.emergency.copernicus.eu/activations/
 
 1. Validate building and road candidates against independent reference data; current impact counts remain unverified.
 2. Test historical OSM completeness and road-access detours in a second region, not just Syapru Besi.
-3. Support larger AOIs by tiling and search for clear optical dates beyond the fixed Trishuli 12/27 August pair. Current maximum is 0.5° × 0.5°.
+3. Support larger AOIs by tiling and test more optical dates and regions. Current maximum is 0.5° × 0.5°; the search attempts at most two acquisition dates on each side of the event.
 4. Validate the English/Nepali Q&A and map-derived figures with human reviewers.
 5. Complete an explicit per-feature evaluation against EMSR927 **only for evaluation**.
 6. Check OSM completeness and possible detours outside the analysis area.
-7. Finish the one-page situation report layout, up-to-six-page technical report, and three-minute demo video.
+7. Review the generated one-page HTML situation report with local responders, and finish the up-to-six-page technical report and three-minute demo video.
 
 ## Submission checklist
 

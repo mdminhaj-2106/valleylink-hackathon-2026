@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).with_name(".env"))
 
-from copilot import answer_question, situation_report
+from copilot import answer_question_with_mode, report_html, situation_report
 from valleylink import ATTRIBUTION, run
 
 
@@ -29,10 +29,13 @@ with st.sidebar:
     submitted = st.button("Run from satellite data", type="primary", use_container_width=True)
 
 if submitted:
+    for key in ("analysis", "imagery", "bbox", "flood_date"):
+        st.session_state.pop(key, None)
     try:
         with st.spinner("Finding same-orbit scenes and analysing roads…"):
             st.session_state.analysis, _, st.session_state.imagery = run((west, south, east, north), flood_date)
             st.session_state.bbox = (west, south, east, north)
+            st.session_state.flood_date = flood_date
     except Exception as exc:
         st.error(str(exc))
 
@@ -94,6 +97,7 @@ else:
 
 map_view = folium.Map(location=[(south + north)/2, (west + east)/2], zoom_start=11,
                       tiles="OpenStreetMap")
+map_view.fit_bounds([[south, west], [north, east]])
 if result["possible_geometry"]["type"] != "GeometryCollection":
     folium.GeoJson(result["possible_geometry"], name="Possible radar or optical change",
                    style_function=lambda _: {"color": "#ffbd59", "fillOpacity": 0.25, "weight": 1}).add_to(map_view)
@@ -108,9 +112,13 @@ if result["buildings"]:
     folium.GeoJson({"type": "FeatureCollection", "features": result["buildings"]},
                    name="Potentially affected buildings",
                    style_function=lambda _: {"color": "#653b9c", "fillOpacity": 0.6}).add_to(map_view)
-for place in result["cutoff"]:
+cutoff_ids = {place["id"] for place in result["cutoff"]}
+for place in result["settlements"]:
+    cut_off = place["id"] in cutoff_ids
     folium.CircleMarker(location=[place["point"][1], place["point"][0]], radius=6,
-                        color="#c02a2a", fill=True, tooltip=f"Possibly cut off: {place['name']}").add_to(map_view)
+                        color="#c02a2a" if cut_off else "#16845b", fill=True,
+                        tooltip=("Possibly cut off: " if cut_off else "Road access retained: ")
+                                + place["name"]).add_to(map_view)
 if selected:
     a, b = selected["edge"]
     folium.PolyLine([[a[1], a[0]], [b[1], b[0]]], color="#00bcd4", weight=7,
@@ -122,16 +130,20 @@ st.subheader("Situation report")
 language = st.radio("Language", ["English", "Nepali"], horizontal=True)
 body = situation_report(result, language)
 st.text(body)
-st.download_button("Download report", body + "\n\n" + ATTRIBUTION, file_name="situation-report.txt")
+st.download_button("Download one-page report", report_html(result, language, st.session_state.bbox,
+                                                             st.session_state.flood_date, ATTRIBUTION),
+                   file_name="situation-report.html", mime="text/html")
 
 st.subheader("Ask about the map")
 question = st.text_input("Question", placeholder="Which villages may have lost road access?")
 if question:
-    st.write(answer_question(result, question, language))
+    answer, ai_used = answer_question_with_mode(result, question, language)
+    st.caption("AI-assisted question interpretation" if ai_used else "Offline rule-based answer")
+    st.write(answer)
 
 with st.expander("Evidence and limitations"):
-    st.write("This is a research prototype. Radar change is not field-verified flood or road closure. "
-             "Road access is computed only within the selected map area; routes outside it may exist. "
+    st.write("This is a research prototype. Satellite change is not field-verified flood or road closure. "
+             "Road access uses a bounded local map; detours beyond it may exist. "
              "Building and bridge counts depend on OpenStreetMap completeness. Satellite revisit time "
              "means the images may miss the flood peak.")
     st.text(ATTRIBUTION)

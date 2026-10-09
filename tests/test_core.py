@@ -1,10 +1,12 @@
 from datetime import date, datetime, timezone
 
 import numpy as np
+import networkx as nx
 from rasterio.transform import from_origin
+from shapely.geometry import Polygon, shape
 
 from cdse import Scene, pick_pair, relative_orbit
-from valleylink import analyze, change_masks, optical_change
+from valleylink import access_analysis, analyze, change_masks, optical_change, road_graph
 
 
 def feature(identifier, geometry, **tags):
@@ -71,3 +73,51 @@ def test_optical_change_excludes_clouds_and_detects_vegetation_loss():
     change, valid = optical_change(pre, post)
     assert change.tolist() == [[True, False], [True, True]]
     assert not valid[0, 1]
+
+
+def test_boundary_touch_does_not_close_road():
+    polygon = Polygon([(0, 0), (1, 0), (1, 1), (0, 1)])
+    road = feature("way/1", line([[-1, 0], [0, 0], [0, -1]]), highway="primary")
+    graph, road_ids, bridge_ids, length = road_graph([road], polygon)
+    assert road_ids == bridge_ids == set()
+    assert length == 0
+    assert all(not attrs["affected"] for _, _, attrs in graph.edges(data=True))
+
+
+def test_affected_road_map_uses_only_exposed_length():
+    pre = np.ones((4, 3, 3), dtype=np.float32)
+    post = pre.copy()
+    pre[2] = post[2] = 0
+    post[0, 1, 1] = 0.1
+    osm = {"roads": [feature("way/7", line([[0, 1.5], [3, 1.5]]), highway="primary")],
+           "buildings": [], "places": [], "hospitals": []}
+    result, _ = analyze(pre, post, from_origin(0, 3, 1, 1), osm)
+    assert result["affected_road_ids"] == ["way/7"]
+    assert result["affected_roads"][0]["properties"]["@osmId"] == "way/7"
+    assert shape(result["affected_roads"][0]["geometry"]).bounds == (1, 1.5, 2, 1.5)
+
+
+def test_overlapping_osm_ways_preserve_blockage_and_count_length_once():
+    roads = [feature("way/1", line([[0, 0], [2, 0]]), highway="primary"),
+             feature("way/2", line([[2, 0], [0, 0]]), highway="primary", bridge="yes")]
+    graph, roads_hit, bridges_hit, length = road_graph(roads, Polygon([(0.5, -1), (1.5, -1),
+                                                                        (1.5, 1), (0.5, 1)]))
+    assert roads_hit == {"way/1", "way/2"}
+    assert bridges_hit == {"way/2"}
+    assert graph.edges[(0, 0), (2, 0)]["affected"]
+    assert graph.edges[(0, 0), (2, 0)]["bridge"]
+    assert graph.edges[(0, 0), (2, 0)]["feature_id"] == "way/2"
+    assert 100_000 < length < 120_000  # one degree, not twice
+
+
+def test_alternative_destination_means_not_cut_off():
+    graph = nx.Graph()
+    graph.add_edge((0, 0), (1, 0), length_m=1)
+    graph.add_edge((1, 0), (2, 0), length_m=5)
+    places = [feature("town/1", point(0, 0), place="town"),
+              feature("village/1", point(1, 0), place="village")]
+    hospitals = [feature("hospital/1", point(2, 0), amenity="hospital")]
+    settlements, cutoff = access_analysis(graph, places, hospitals, {((0, 0), (1, 0))})
+    assert cutoff == []
+    assert settlements[0]["before_m"] == 1
+    assert settlements[0]["after_m"] == 5

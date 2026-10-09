@@ -98,17 +98,19 @@ def road_graph(roads, flood_geometry):
                 if a == b:
                     continue
                 segment = LineString([a, b])
-                affected = not flood_geometry.is_empty and flood_geometry.intersects(segment)
+                overlap = 0.0 if flood_geometry.is_empty else segment.intersection(flood_geometry).length
+                affected = overlap > 0
                 length = meters(a, b)
                 existing = graph.get_edge_data(a, b)
-                graph.add_edge(a, b, feature_id=(existing["feature_id"] if existing and existing["affected"]
+                graph.add_edge(a, b, feature_id=(identifier if bridge and not (existing and existing["bridge"])
+                                                  else existing["feature_id"] if existing and existing["affected"]
                                                   else identifier),
                                affected=affected or bool(existing and existing["affected"]),
                                length_m=length, bridge=bridge or bool(existing and existing["bridge"]))
                 if affected:
                     affected_ids.add(identifier)
                     if not existing or not existing["affected"]:
-                        affected_length += length * (segment.intersection(flood_geometry).length / segment.length)
+                        affected_length += length * overlap / segment.length
                     if bridge:
                         bridge_ids.add(identifier)
     return graph, affected_ids, bridge_ids, affected_length
@@ -194,12 +196,21 @@ def analyze(pre, post, transform, osm, strict_db=3.0, possible_db=2.0, optical=N
     row_km2 = (6371.0**2 * abs(math.radians(transform.a))
                * abs(np.diff(np.sin(np.radians(lat_edges)))))
     flood_km2 = float(strict.sum(axis=1) @ row_km2)
+    affected_roads = []
+    for feature in osm["roads"]:
+        if feature_id(feature) not in road_ids:
+            continue
+        overlap = shape(feature["geometry"]).intersection(strict_geom)
+        lines = [part for part in getattr(overlap, "geoms", (overlap,))
+                 if part.geom_type in ("LineString", "MultiLineString") and part.length > 0]
+        if lines:
+            affected_roads.append({**feature, "geometry": mapping(unary_union(lines))})
     return {"strict_geometry": mapping(strict_geom), "possible_geometry": mapping(possible_geom),
             "valid_fraction": float(valid.mean()), "flood_km2": round(flood_km2, 2),
             "evidence_mode": "optical" if optical is not None else "radar-only",
             "optical_clear_fraction": float(optical_valid.mean()) if optical_valid is not None else None,
             "buildings": buildings,
-            "affected_roads": [f for f in osm["roads"] if feature_id(f) in road_ids],
+            "affected_roads": affected_roads,
             "affected_road_ids": sorted(road_ids), "affected_bridge_ids": sorted(bridge_ids),
             "affected_road_km": round(road_m / 1000, 2), "settlements": settlements,
             "cutoff": cutoff, "access_available": access_available, "scenarios": scenarios}, graph
