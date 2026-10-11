@@ -15,6 +15,8 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
+If macOS has offloaded files from a cloud-synced `Documents` folder, keep the virtual environment outside that folder (for example under `~/Library/Caches/ValleyLink/venv`) and symlink it to `.venv`. Offloaded package files can make imports, tests, and app startup appear to hang.
+
 For optional live refresh, copy `.env.example` to `.env` and add your own keys. Never commit or paste them into chat.
 
 The app opens with a bundled, live-derived Syapru Besi reference case captured on 9 October 2026. It needs **no API keys or network** to display the imagery, impact map, scenarios, report, and rule-based Q&A. The reference is a fixed snapshot, not a fresh analysis or a confirmed damage map. To analyze another area/date or refresh it, create a free Copernicus Data Space account and OAuth client in [Sentinel Hub user settings](https://shapps.dataspace.copernicus.eu/dashboard/#/account/settings), plus an [ohsome v2 API key](https://account.heigit.org/). The app reads keys from `.env`, which Git ignores. Optionally set `GROQ_API_KEY` and opt in on the Q&A panel for model-assisted question interpretation; Groq takes priority over `OPENAI_API_KEY`, and answers remain map-derived even without either key. Live mode finds same-orbit Sentinel-1 scenes through public CDSE STAC (with Catalog fallback), then searches for a cloud-screened Sentinel-2 pair up to 30 days before and 14 days after the selected date. External processing can time out; a failed refresh leaves the last displayed analysis intact.
@@ -35,7 +37,7 @@ The inputs are Sentinel-1, Sentinel-2, Copernicus DEM for radar terrain correcti
 
 ## Preliminary independent check
 
-The [official EMSR927 maps](https://mapping.emergency.copernicus.eu/activations/EMSR927/) were used **only after inference** to check the output. Against their *mass-movement polygons* (not a complete flood boundary), our fixed optical-change rule covers 65.5% of the mapped area in Syapru Besi AOI01 and 56.3% in held-out Timure AOI02. Conversely, 40.4% and 34.2% of our candidate optical-change area lies inside those polygons. These overlap diagnostics are **not damage accuracy or flood precision/recall**. The official grades and our OSM-derived building/road counts are not interchangeable. The 27 August optical image precedes the 28 August radar image, so they may show different stages of the event.
+The [official EMSR927 maps](https://mapping.emergency.copernicus.eu/activations/EMSR927/) were used **only after inference** to check the output. Against their *mass-movement polygons* (not a complete flood boundary), our fixed optical-change rule covers 65.5% of the mapped area in Syapru Besi AOI01 and 56.3% in held-out Timure AOI02. Conversely, 40.4% and 34.2% of our candidate optical-change area lies inside those polygons. An AOI01 feature check found that 78 of 164 candidate OSM building footprints contain an EMS affected-building point; all 14 EMS "Destroyed" road features touch the candidate mask, but so do 3 of 9 marked "No visible damage." These are **not damage accuracy or flood precision/recall**: the maps use different inventories and geometry, and a line needs only one point of contact to count. The 27 August optical image precedes the 28 August radar image, so they may show different stages of the event. On 11 October a separate nearby box (85.35, 28.15, 85.39, 28.21) completed a fresh optical live run from satellite data and historical OSM; this is a pipeline smoke test, not accuracy validation.
 
 ## Known gaps before submission
 
@@ -43,7 +45,7 @@ The [official EMSR927 maps](https://mapping.emergency.copernicus.eu/activations/
 2. Test historical OSM completeness and road-access detours in a second region, not just Syapru Besi.
 3. Support larger AOIs by tiling and test more optical dates and regions. Current maximum is 0.5° × 0.5°; the search attempts at most two acquisition dates on each side of the event.
 4. Validate the English/Nepali Q&A and map-derived figures with human reviewers.
-5. Complete an explicit per-feature evaluation against EMSR927 **only for evaluation**.
+5. Extend the preliminary EMSR927 feature checks across more AOIs and account for OSM coverage and geometry differences; use the official data **only for evaluation**.
 6. Check OSM completeness and possible detours outside the analysis area.
 7. Review the generated one-page HTML situation report with local responders, and finish the up-to-six-page technical report and three-minute demo video.
 

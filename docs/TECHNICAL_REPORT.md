@@ -2,8 +2,9 @@
 title: "ValleyLink: satellite change and road-access screening"
 subtitle: "Multimodal AI Hackathon 2026 · Track B technical report"
 date: "11 October 2026"
-geometry: margin=0.65in
+geometry: margin=0.55in
 fontsize: 10pt
+linestretch: 0.9
 colorlinks: true
 ---
 
@@ -24,6 +25,8 @@ The Streamlit dashboard shows Sentinel-1 radar and, when usable, Sentinel-2 opti
 
 Copernicus EMS and UNOSAT damage products are not used as inputs. The app retains the previous successful result, clearly labeled, if a new live request fails.
 
+\newpage
+
 ## 3. August 2026 Nepal case study
 
 For the 26 August event, the bundled live-derived Syapru Besi reference snapshot uses a small WGS84 area around 85.318–85.353°E, 28.145–28.192°N. The optical pair was acquired on 12 and 27 August; the radar post-event scene was acquired on 28 August. Because these images capture different times, their change layers can reflect different event stages.
@@ -39,11 +42,13 @@ For the 26 August event, the bundled live-derived Syapru Besi reference snapshot
 
 These figures are exploratory. They are not a count of confirmed destroyed buildings, blocked roads or isolated people. The dashboard provides scene identifiers and acquisition times for auditability.
 
+On 11 October, a separate nearby box (85.35–85.39°E, 28.15–28.21°N) completed a fresh end-to-end optical run using live Sentinel and historical OSM services. It returned 2.41 km² of candidate change, 20 mapped building intersections and one possibly cut-off settlement. This tests the pipeline beyond the bundled snapshot; it does not validate impact accuracy or guarantee service availability for every judge-selected area/date.
+
 ## 4. Independent check and evidence limits
 
 We compared the fixed optical-change rule after inference with Copernicus Emergency Management Service activation EMSR927 *mass-movement polygons*. In Syapru Besi AOI01, candidate change covers 65.5% of the mapped polygon area, while 40.4% of candidate area falls inside those polygons. For Timure AOI02, the corresponding figures are 56.3% and 34.2%. This is a preliminary spatial-overlap diagnostic, not flood precision/recall: the reference polygons depict one hazard class and are not an exhaustive pixel-level truth set. EMSR927 did not train, tune or feed the algorithm.
 
-No independent per-building or per-road damage labels have yet been checked, and road-access conclusions have not been field validated. The optical and radar rules need evaluation on more dates, terrain types and cloud conditions. The current automated checks cover code behavior; they do not establish real-world mapping accuracy.
+An additional AOI01 feature check uses the EMSR927 v1 grading archive after inference. Of 164 candidate OSM building footprints, 78 contain at least one EMS mapped affected-building point; 80 of 433 EMS affected-building points fall inside those candidate footprints. All 14 EMS road features graded "Destroyed" touch the candidate mask, as do 3 of 9 graded "No visible damage"; 3 of 5 EMS destroyed-bridge points touch the mask. A line counts as a touch even if only a small part intersects. Different building inventories, point-versus-polygon geometry, incomplete negative labels and observation dates prevent precision/recall claims. Road-access conclusions remain unverified. The rules need evaluation on more dates, terrain types and cloud conditions.
 
 ## 5. What the system cannot do
 

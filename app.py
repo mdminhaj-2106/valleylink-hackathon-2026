@@ -32,12 +32,13 @@ if "analysis" not in st.session_state and CASE_PATH.exists():
 with st.sidebar:
     st.header("Optional live analysis")
     st.caption("Small bounding box, WGS84 longitude/latitude")
-    west = st.number_input("West", value=85.318, format="%.5f")
-    south = st.number_input("South", value=28.145, format="%.5f")
-    east = st.number_input("East", value=85.353, format="%.5f")
-    north = st.number_input("North", value=28.192, format="%.5f")
-    flood_date = st.date_input("Flood date", value=date(2026, 8, 26))
-    submitted = st.button("Refresh from live satellite APIs", type="primary", use_container_width=True)
+    with st.form("live_analysis"):
+        west = st.number_input("West", value=85.318, format="%.5f")
+        south = st.number_input("South", value=28.145, format="%.5f")
+        east = st.number_input("East", value=85.353, format="%.5f")
+        north = st.number_input("North", value=28.192, format="%.5f")
+        flood_date = st.date_input("Flood date", value=date(2026, 8, 26))
+        submitted = st.form_submit_button("Refresh from live satellite APIs", type="primary", use_container_width=True)
 
 if submitted:
     try:
@@ -82,41 +83,11 @@ st.info(st.session_state.get("source", "Previous successful analysis")
         + " · This is a research demonstration, not confirmed field damage.")
 st.caption(f"Showing analysis for {st.session_state.flood_date} · WGS84 box {west:.3f}, {south:.3f}, {east:.3f}, {north:.3f}")
 scenes = result["scenes"]
-st.caption(f"Sentinel-1 relative orbit {scenes['relative_orbit']} · Before: {scenes['before']} · After: {scenes['after']}")
-if result["optical_dates"]:
-    st.caption(f"Sentinel-2 · Before: {result['optical_dates'][0]} · After: {result['optical_dates'][1]}")
-else:
+if not result["optical_dates"]:
     st.warning(f"No usable optical pair: {result['optical_error']}. Radar-only candidate impacts are lower confidence.")
 
-cards = st.columns(5)
-for column, label, value in zip(cards,
-    ["Candidate change", "Buildings", "Road exposed", "Bridges", "Possibly cut off"],
-    [f"{result['flood_km2']} km²", len(result["buildings"]),
-     f"{result['affected_road_km']} km", len(result["affected_bridge_ids"]),
-     len(result["cutoff"]) if result["access_available"] else "Unknown"],
-):
-    column.metric(label, value)
-
-st.caption(f"Usable radar coverage: {result['valid_fraction']:.0%}. "
-           + (f"Usable optical coverage: {result['optical_clear_fraction']:.0%}. "
-              if result['optical_clear_fraction'] is not None else "")
-           + "All impacts are candidates, not confirmed field damage.")
-
-def preview(image):
-    db = 10 * np.log10(np.maximum(image[0], 1e-8))
-    return np.nan_to_num(np.clip((db + 25) / 25 * 255, 0, 255)).astype("uint8")
-
-before_col, after_col = st.columns(2)
-before_col.image(preview(st.session_state.imagery[0]), caption="Before: Sentinel-1 VV radar")
-after_col.image(preview(st.session_state.imagery[1]), caption="After: Sentinel-1 VV radar")
-if len(st.session_state.imagery) == 4:
-    optical_before, optical_after = st.columns(2)
-    def rgb(image):
-        return np.clip(np.moveaxis(image[[2, 1, 0]], 0, -1) * 2.5, 0, 1)
-    optical_before.image(rgb(st.session_state.imagery[2]), caption="Before: Sentinel-2 false color (NIR/red/green)")
-    optical_after.image(rgb(st.session_state.imagery[3]), caption="After: Sentinel-2 false color (NIR/red/green)")
-
-st.subheader("Which crossing matters most?")
+st.subheader("Impact screening map")
+st.caption("Orange marks stronger candidate change. Red roads and settlements need field checking.")
 scenarios = result["scenarios"]
 selected = None
 if scenarios:
@@ -159,6 +130,41 @@ st.pydeck_chart(pdk.Deck(layers=layers, initial_view_state=pdk.ViewState(
     latitude=(south + north) / 2, longitude=(west + east) / 2, zoom=12),
     map_style=None, tooltip={"text": "{name}"}), height=580, width="stretch")
 st.caption("Offline map (no background tiles). Amber = possible change · orange = stronger candidate · red = exposed road or possibly cut off settlement · purple = building · green = settlement with mapped access")
+
+cards = st.columns(5)
+for column, label, value in zip(cards,
+    ["Candidate change", "Buildings at risk", "Road intersected", "Bridge features", "Possibly cut off"],
+    [f"{result['flood_km2']} km²", len(result["buildings"]),
+     f"{result['affected_road_km']} km", len(result["affected_bridge_ids"]),
+     len(result["cutoff"]) if result["access_available"] else "Unknown"],
+):
+    column.metric(label, value)
+
+st.caption(f"Usable radar coverage: {result['valid_fraction']:.0%}. "
+           + (f"Usable optical coverage: {result['optical_clear_fraction']:.0%}. "
+              if result['optical_clear_fraction'] is not None else "")
+           + "All impacts are candidates, not confirmed field damage.")
+
+with st.expander("Before/after imagery and acquisition details"):
+    st.caption(f"Sentinel-1 relative orbit {scenes['relative_orbit']} · Before: {scenes['before']} · After: {scenes['after']}")
+    if result["optical_dates"]:
+        st.caption(f"Sentinel-2 · Before: {result['optical_dates'][0]} · After: {result['optical_dates'][1]}")
+
+    def preview(image):
+        db = 10 * np.log10(np.maximum(image[0], 1e-8))
+        return np.nan_to_num(np.clip((db + 25) / 25 * 255, 0, 255)).astype("uint8")
+
+    before_col, after_col = st.columns(2)
+    before_col.image(preview(st.session_state.imagery[0]), caption="Before: Sentinel-1 VV radar")
+    after_col.image(preview(st.session_state.imagery[1]), caption="After: Sentinel-1 VV radar")
+    if len(st.session_state.imagery) == 4:
+        optical_before, optical_after = st.columns(2)
+
+        def rgb(image):
+            return np.clip(np.moveaxis(image[[2, 1, 0]], 0, -1) * 2.5, 0, 1)
+
+        optical_before.image(rgb(st.session_state.imagery[2]), caption="Before: Sentinel-2 false color (NIR/red/green)")
+        optical_after.image(rgb(st.session_state.imagery[3]), caption="After: Sentinel-2 false color (NIR/red/green)")
 
 st.subheader("Situation report")
 language = st.radio("Language", ["English", "Nepali"], horizontal=True)

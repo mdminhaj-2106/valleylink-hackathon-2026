@@ -11,6 +11,15 @@ EMPTY_GEOMETRY = {"type": "GeometryCollection", "geometries": []}
 
 
 class AppTests(unittest.TestCase):
+    def test_live_form_submits_last_edited_coordinate(self):
+        app = AppTest.from_file(Path(__file__).resolve().parents[1] / "app.py", default_timeout=30)
+        with patch("valleylink.run", side_effect=ValueError("test run")) as live_run, \
+             patch("streamlit.pydeck_chart"):
+            app.run()
+            app.number_input[3].set_value(28.21)
+            app.button[0].click().run()
+        self.assertAlmostEqual(live_run.call_args.args[0][3], 28.21)
+
     def test_bundled_reference_opens_without_live_api_calls(self):
         app = AppTest.from_file(Path(__file__).resolve().parents[1] / "app.py", default_timeout=30)
         with patch("valleylink.run") as live_run, patch("valleylink.token") as token, \
